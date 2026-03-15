@@ -254,7 +254,7 @@
             bindings = <
    &kp TAB     &kp V          &ad_w        &ad_g         &ad_m       &kp J         &kp SEMICOLON  &kp PERIOD  &kp APOS      &ad_fslh     &kp EQUAL   &mo 3
    &lt 4 ESC   &hm LGUI S     &hm LCTRL N  &hm LSHIFT T  &hm LALT H  &kp K         &kp COMMA      &hm LALT A  &hm LSHIFT E  &hm LCTRL I  &hm LGUI C  &kp ENTER
-   &kp LSHFT   &ad_p          &ad_f        &ad_d         &kp L       &kp X         &kp MINUS      &kp U       &kp O         &ad_y        &kp B       &kp RSHFT
+   &kp LSHFT   &ad_p          &ad_f        &ad_d         &kp L       &kp X         &kp MINUS      &kp U       &kp O         &ad_y        &kp B       &mo 5
                                            &mo 2         &kp R       &sk LSHFT     &sk LSHFT      &kp SPACE   &mo 1
             >;
         };
