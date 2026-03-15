@@ -304,7 +304,7 @@
 
         // Layer 5: Window manager
         layer_wm {
-            bindings = 
+            bindings = <
    &none  &none  &none  &none  &none  &none      &none  &none  &none  &none  &none  &none
    &none  &kp LA(N1)  &kp LA(N2)  &kp LA(N3)  &kp LA(N4)  &kp LA(N5)      &kp LA(N6)  &kp LA(N7)  &kp LA(N8)  &kp LA(N9)  &none  &none
    &none  &kp LA(LS(N1))  &kp LA(LS(N2))  &kp LA(LS(N3))  &kp LA(LS(N4))  &kp LA(LS(N5))      &kp LA(LS(N6))  &kp LA(LS(N7))  &kp LA(LS(N8))  &kp LA(LS(N9))  &none  &none
