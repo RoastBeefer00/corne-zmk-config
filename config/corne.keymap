@@ -255,7 +255,7 @@
    &kp TAB     &kp V          &ad_w        &ad_g         &ad_m       &kp J         &kp SEMICOLON  &kp PERIOD  &kp APOS      &ad_fslh     &kp EQUAL   &mo 3
    &lt 4 ESC   &hm LGUI S     &hm LCTRL N  &hm LSHIFT T  &hm LALT H  &kp K         &kp COMMA      &hm LALT A  &hm LSHIFT E  &hm LCTRL I  &hm LGUI C  &kp ENTER
    &kp LSHFT   &ad_p          &ad_f        &ad_d         &kp L       &kp X         &kp MINUS      &kp U       &kp O         &ad_y        &kp B       &mo 5
-                                           &mo 2         &kp R       &sk LSHFT     &sk LSHFT      &kp SPACE   &mo 1
+                                           &kp BSPC      &lt 2 R     &sk LSHFT     &sk LSHFT      &lt 1 SPACE   &kp ENTER
             >;
         };
 
@@ -298,7 +298,7 @@
    &none   &none   &none   &none     &none      &none        &none       &kp N7  &kp N8  &kp N9  &none   &none
    &none   &none   &none   &kp LSHFT &kp LALT   &none        &kp PERIOD  &kp N4  &kp N5  &kp N6  &none   &none
    &none   &none   &none   &none     &none      &none        &none       &kp N1  &kp N2  &kp N3  &none   &none
-                           &trans    &trans     &trans       &kp N0      &trans  &trans
+                           &trans    &trans     &trans       &kp N0      &kp N0  &trans
             >;
         };
 
