@@ -112,17 +112,17 @@
         compatible = "zmk,combos";
         combo_z {
             timeout-ms = <45>;
-            key-positions = <16 17>;
+            key-positions = <2 3>;
             bindings = <&kp Z>;
         };
         combo_q {
             timeout-ms = <45>;
-            key-positions = <17 18>;
+            key-positions = <3 4>;
             bindings = <&kp Q>;
         };
         combo_qu {
             timeout-ms = <45>;
-            key-positions = <16 18>;
+            key-positions = <2 4>;
             bindings = <&m_qu>;
         };
     };
@@ -253,7 +253,7 @@
         default_layer {
             bindings = <
    &kp TAB     &kp V          &ad_w        &ad_g         &ad_m       &kp J         &kp SEMICOLON  &kp PERIOD  &kp APOS      &ad_fslh     &kp EQUAL   &mo 3
-   &lt 4 ESC   &hm LGUI S     &hm LCTRL N  &hm LSHIFT T  &hm LALT H  &kp K         &kp COMMA      &hm LALT A  &hm LSHIFT E  &hm LCTRL I  &hm LGUI C  &kp ENTER
+   &lt 4 ESC   &hm LGUI S     &rm LCTRL N  &hm LSHIFT T  &hm LALT H  &kp K         &kp COMMA      &hm LALT A  &hm LSHIFT E  &hm LCTRL I  &hm LGUI C  &kp ENTER
    &kp LSHFT   &ad_p          &ad_f        &ad_d         &kp L       &kp X         &kp MINUS      &kp U       &kp O         &ad_y        &kp B       &mo 5
                                            &kp BSPC      &lt 2 R     &sk LSHFT     &sk LSHFT      &lt 1 SPACE   &kp ENTER
             >;
@@ -264,7 +264,7 @@
         layer_sym {
             bindings = <
    &none   &kp EXCL   &kp AT     &kp HASH   &kp DLLR   &kp PRCNT      &kp CARET  &kp AMPS   &kp STAR   &none      &none      &none
-   &none   &kp QMARK  &kp TILDE  &kp LBRC   &kp LPAR   &kp LBKT       &none      &kp COLON  &kp MINUS  &kp EQUAL  &none      &none
+   &none   &kp QMARK  &kp TILDE  &kp LBRC   &kp LPAR   &kp LBKT       &kp BSLH   &kp COLON  &kp MINUS  &kp EQUAL  &none      &none
    &none   &none      &kp GRAVE  &kp RBRC   &kp RPAR   &kp RBKT       &none      &kp PIPE   &kp PLUS   &kp UNDER  &none      &none
                                  &trans      &trans     &trans         &trans     &trans     &trans
             >;
