@@ -21,8 +21,11 @@ for (j, k), (h, l) in itertools.product(jk, hl):
     if len({j, k, h, l}) < 4:
         continue
     out = subprocess.run(["./target/release/kb", "opt", "1.5", sys.argv[1], "4", place(h, j, k, l), "0.05", "hjkl"],
-                         capture_output=True, text=True, env={"HINGE": "200"}).stdout.splitlines()[0]
-    cost, lay = out.split()[1], out.split("   ", 1)[1]
+                         capture_output=True, text=True, env={"HINGE": "200"}).stdout.splitlines()
+    if not out:
+        print("FAILED", h, j, k, l, flush=True)
+        continue
+    cost, lay = out[0].split()[1], out[0].split("   ", 1)[1]
     res.append((float(cost), lay))
     print(cost, lay, flush=True)
 res.sort()

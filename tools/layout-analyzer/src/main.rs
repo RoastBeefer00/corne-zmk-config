@@ -70,11 +70,12 @@ fn bigram_flags(k: &[Key; NSLOT], a: usize, b: usize) -> u8 {
     if (inner(x) && midring(y)) || (inner(y) && midring(x)) {
         f |= F_LSB;
     }
-    if (x.rank - y.rank).abs() == 1 {
-        let dr = (x.row - y.row).abs();
-        if dr == 2 {
-            f |= F_FSB;
-        } else if dr == 1 {
+    let dr = (x.row - y.row).abs();
+    if dr == 2 {
+        // full scissor: top<->bottom on any two fingers of one hand (e.g. pinky-bottom -> middle-top)
+        f |= F_FSB;
+    } else if dr == 1 && (x.rank - y.rank).abs() == 1 {
+        {
             // finger length: middle > ring > index > pinky; shorter finger higher = half scissor
             let len = |q: Key| [0, 2, 3, 1][q.rank as usize];
             let (hi, lo) = if x.row < y.row { (x, y) } else { (y, x) };
@@ -366,7 +367,7 @@ fn cost(m: &Metrics, o: &Obj) -> f64 {
         - 0.4 * m.alt - 0.15 * m.roll_in - 0.05 * m.roll_out
         + 4.0 * m.effort
         + 6.0 * m.thumb_rep
-        + 1.0 * (pinky - 14.0).max(0.0);
+        + 1.5 * pinky + 2.0 * m.pinky_off;
     for f in m.fingers.iter().take(8) {
         c += 1.0 * (f - 16.0).max(0.0);
     }
@@ -375,7 +376,7 @@ fn cost(m: &Metrics, o: &Obj) -> f64 {
         let hw: f64 = std::env::var("HINGE").ok().and_then(|v| v.parse().ok()).unwrap_or(100.0);
         let h = |x: f64| hw * x.max(0.0);
         c += h(m.sfb - b.sfb - s) + h(m.sfs - b.sfs - s) + h(m.lsb - b.lsb - s)
-            + h((m.fsb + m.hsb) - (b.fsb + b.hsb) - s) + h(b.alt - m.alt - 4.0 * s)
+            + h((m.fsb + m.hsb) - (b.fsb + b.hsb) - s) + h(m.fsb - b.fsb - s) + h(b.alt - m.alt - 4.0 * s)
             + h(m.redirect + m.weak_red - b.redirect - b.weak_red - 4.0 * s)
             + h(10.0 * (m.effort - b.effort) - s)
             + h(b.rows[1] - m.rows[1] - 4.0 * s)

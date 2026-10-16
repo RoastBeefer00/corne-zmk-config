@@ -269,17 +269,17 @@
         };
 
         // Layer 1: Ergo (alternate base, &to ERGO from the system layer)
-        // Re-optimized HD-Promethium descendant: lower SFB/SFS/LSB/scissors/redirects, higher alternation.
+        // Re-optimized HD-Promethium descendant: lower SFS/scissors/redirects/pinky load, higher alternation.
         // ╭───────────────────────────────────────╮ ╭───────────────────────────────────────╮
-        // │       │  M  │  P  │  D  │  G  │  V  │ │  ;  │  U  │  O  │  J  │  /  │       │
+        // │       │  J  │  B  │  D  │  G  │  V  │ │  ;  │  U  │  O  │  Y  │  K  │       │
         // │       │ L/G │ N/C │ T/S │ S/A │  W  │ │  .  │ I/A │ A/S │ E/C │ H/G │       │
-        // │       │  X  │  F  │  K  │  C  │  B  │ │  =  │  ,  │  '  │  -  │  Y  │       │
+        // │       │  X  │  P  │  M  │  C  │  F  │ │  =  │  ,  │  '  │  /  │  -  │       │
         // ╰───────────────────╮   BSPC   │ R/NAV │ SHFT │ │ SHFT │ SPC/SYM │ ENT ╭───────────────────╯
         ergo_layer {
             bindings = <
-   &trans  &kp M          &kp P          &kp D           &kp G          &kp V         &kp SEMI    &kp U          &kp O           &kp J          &kp FSLH      &trans
+   &trans  &kp J          &kp B          &kp D           &kp G          &kp V         &kp SEMI    &kp U          &kp O           &kp Y          &kp K         &trans
    &trans  &hm LGUI L     &hm LCTRL N    &hm LSHIFT T    &hm LALT S     &kp W         &kp PERIOD  &hm LALT I     &hm LSHIFT A    &hm LCTRL E    &hm LGUI H    &trans
-   &trans  &kp X          &kp F          &kp K           &kp C          &kp B         &kp EQUAL   &kp COMMA      &kp APOS        &kp MINUS      &kp Y         &trans
+   &trans  &kp X          &kp P          &kp M           &kp C          &kp F         &kp EQUAL   &kp COMMA      &kp APOS        &kp FSLH       &kp MINUS     &trans
                                          &trans          &trans         &trans        &trans      &trans         &trans
             >;
         };
