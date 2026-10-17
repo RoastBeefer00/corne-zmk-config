@@ -8,15 +8,6 @@
 #include <dt-bindings/zmk/keys.h>
 #include <dt-bindings/zmk/bt.h>
 
-#define BASE 0
-#define ERGO 1
-#define VIM  2
-#define SYM  3
-#define NAV  4
-#define SYS  5
-#define NUM  6
-#define WM   7
-
 &sk {
     release-after-ms = <1000>;
     quick-release;
@@ -261,41 +252,14 @@
 
         default_layer {
             bindings = <
-   &kp TAB     &kp V          &ad_w        &ad_g         &ad_m       &kp J         &kp SEMICOLON  &kp PERIOD  &kp APOS      &ad_fslh     &kp EQUAL   &mo SYS
-   &lt NUM ESC &hm LGUI S     &hm LCTRL N  &hm LSHIFT T  &hm LALT H  &kp K         &kp COMMA      &hm LALT A  &hm LSHIFT E  &hm LCTRL I  &hm LGUI C  &kp ENTER
-   &kp LSHFT   &ad_p          &ad_f        &ad_d         &kp L       &kp X         &kp MINUS      &kp U       &kp O         &ad_y        &kp B       &mo WM
-                                           &kp BSPC      &lt NAV R   &sk LSHFT     &sk LSHFT      &lt SYM SPACE &kp ENTER
+   &kp TAB     &kp V          &ad_w        &ad_g         &ad_m       &kp J         &kp SEMICOLON  &kp PERIOD  &kp APOS      &ad_fslh     &kp EQUAL   &mo 3
+   &lt 4 ESC   &hm LGUI S     &hm LCTRL N  &hm LSHIFT T  &hm LALT H  &kp K         &kp COMMA      &hm LALT A  &hm LSHIFT E  &hm LCTRL I  &hm LGUI C  &kp ENTER
+   &kp LSHFT   &ad_p          &ad_f        &ad_d         &kp L       &kp X         &kp MINUS      &kp U       &kp O         &ad_y        &kp B       &mo 5
+                                           &kp BSPC      &lt 2 R     &sk LSHFT     &sk LSHFT      &lt 1 SPACE   &kp ENTER
             >;
         };
 
-        // Layer 1: Ergo (alternate base, &to ERGO from the system layer)
-        // Re-optimized HD-Promethium descendant: lower SFS/scissors/redirects/pinky load, higher alternation.
-        // ╭───────────────────────────────────────╮ ╭───────────────────────────────────────╮
-        // │       │  X  │  P  │  D  │  G  │  V  │ │  =  │  ,  │  '  │  /  │  -  │       │
-        // │       │ L/G │ N/C │ T/S │ S/A │  W  │ │  ;  │ I/A │ A/S │ E/C │ H/G │       │
-        // │       │  J  │  B  │  M  │  C  │  F  │ │  .  │  U  │  O  │  Y  │  K  │       │
-        // ╰───────────────────╮   BSPC   │ R/NAV │ SHFT │ │ SHFT │ SPC/SYM │ ENT ╭───────────────────╯
-        ergo_layer {
-            bindings = <
-   &trans  &kp X          &kp P          &kp D           &kp G          &kp V         &kp EQUAL   &kp COMMA      &kp APOS        &kp FSLH       &kp MINUS     &trans
-   &trans  &hm LGUI L     &hm LCTRL N    &hm LSHIFT T    &hm LALT S     &kp W         &kp SEMI    &hm LALT I     &hm LSHIFT A    &hm LCTRL E    &hm LGUI H    &trans
-   &trans  &kp J          &kp B          &kp M           &kp C          &kp F         &kp PERIOD  &kp U          &kp O           &kp Y          &kp K         &trans
-                                         &trans          &trans         &trans        &trans      &trans         &trans
-            >;
-        };
-
-        // Layer 2: Vim (alternate base, &to VIM from the system layer)
-        // (work in progress: vim-tuned layout lands here; transparent until then)
-        vim_layer {
-            bindings = <
-   &trans  &trans  &trans  &trans  &trans  &trans      &trans  &trans  &trans  &trans  &trans  &trans
-   &trans  &trans  &trans  &trans  &trans  &trans      &trans  &trans  &trans  &trans  &trans  &trans
-   &trans  &trans  &trans  &trans  &trans  &trans      &trans  &trans  &trans  &trans  &trans  &trans
-                           &trans  &trans  &trans      &trans  &trans  &trans
-            >;
-        };
-
-        // Layer 3: Symbols (right thumb space hold)
+        // Layer 1: Symbols (right thumb space hold)
         // Mirrors your layer_keypad symbols
         layer_sym {
             bindings = <
@@ -306,7 +270,7 @@
             >;
         };
 
-        // Layer 4: Nav (thumb R hold)
+        // Layer 2: Nav (lt 2 R)
         // Arrow keys, page nav — mirrors layer_fn
         layer_nav {
             bindings = <
@@ -317,18 +281,17 @@
             >;
         };
 
-        // Layer 5: Bluetooth / System (top-right outer key)
-        // Bottom-right: pick the base layout (Promethium / Ergo / Vim)
+        // Layer 3: Bluetooth / System (mo 3 — reached via combo or adjust)
         layer_bt {
             bindings = <
    &none   &bt BT_SEL 0  &bt BT_SEL 1  &bt BT_SEL 2  &bt BT_SEL 3  &bt BT_SEL 4      &none   &none   &none   &none   &none   &none
    &none   &none         &none         &none         &none         &none             &none   &none   &none   &none   &none   &none
-   &none   &none         &none         &none         &none         &bt BT_CLR        &none   &to BASE &to ERGO &to VIM &none   &none
+   &none   &none         &none         &none         &none         &bt BT_CLR        &none   &none   &none   &none   &none   &none
                                        &none         &none         &none             &none   &none   &none
             >;
         };
 
-        // Layer 6: Numpad (ESC hold)
+        // Layer 4: Numpad (lt 4 ESC hold, mo4)
         // Mirrors layer_num
         layer_num {
             bindings = <
@@ -339,7 +302,7 @@
             >;
         };
 
-        // Layer 7: Window manager
+        // Layer 5: Window manager
         layer_wm {
             bindings = <
    &none  &none  &none  &none  &none  &none      &none  &none  &none  &none  &none  &none
