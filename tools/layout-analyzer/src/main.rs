@@ -264,6 +264,8 @@ struct Metrics {
     vim_scis: f64,
     hjkl: f64,
     vowel_viol: f64, // VOWELS=left|right: a/i/o/u not on that hand
+    moved: f64, // NEAR=<layout>: keys placed differently from that layout
+    pref_viol: f64, // PREFS=1: bottom-heavy, no h/i or c/i ring-pinky, w off the pinkies, e middle-home + a index-home
     tri: [f64; 8], // trigram class totals, indexed by Tri
 }
 
@@ -283,6 +285,8 @@ struct Model {
     idx_tri: Vec<Vec<([u8; 3], f64)>>,
     idx_vim: Vec<Vec<([u8; 2], f64)>>,
     vowel_hand: Option<u8>,
+    prefs: bool,
+    near: Option<[usize; NITEM]>,
 }
 
 fn index_by_item<const N: usize>(grams: impl Iterator<Item = ([usize; N], f64)>) -> Vec<Vec<([u8; N], f64)>> {
@@ -333,6 +337,8 @@ impl Model {
             idx_tri: index_by_item(c.tri.iter().map(|g| ([g.0, g.1, g.2], g.3))),
             idx_vim: index_by_item(vim_pairs.iter().map(|g| ([g.0, g.1], g.2))),
             k, bflag, dist, tcls, c, vim_mono, vim_pairs,
+            prefs: std::env::var("PREFS").is_ok(),
+            near: std::env::var("NEAR").ok().map(|l| parse(&l)),
             vowel_hand: match std::env::var("VOWELS").as_deref() {
                 Ok("left") => Some(0),
                 Ok("right") => Some(1),
@@ -401,6 +407,20 @@ impl Model {
         m.thumb_rep = (0..NITEM).find(|&i| pos[i] == THUMB).map_or(0.0, |i| self.c.rep[i]);
         if with_vim {
             m.hjkl = self.hjkl_penalty(pos);
+        }
+        if let Some(r) = &self.near {
+            m.moved = (0..NSLOT).filter(|&i| pos[i] != r[i]).count() as f64;
+        }
+        if self.prefs {
+            let key = |c| self.k[pos[item_id(c).unwrap()]];
+            let (h, i, w, e, a, c) = (key('h'), key('i'), key('w'), key('e'), key('a'), key('c'));
+            let ring_pinky = |x: Key, y: Key| x.hand == y.hand && x.rank + y.rank == 1 && x.finger < 8 && y.finger < 8;
+            let ea_roll = e.row == 1 && e.rank == 2 && a.row == 1 && a.rank == 3 && a.col != 4 && a.col != 5 && a.hand == e.hand;
+            m.pref_viol = (m.rows[0] - m.rows[2]).max(0.0)
+                + ring_pinky(h, i) as u8 as f64
+                + ring_pinky(c, i) as u8 as f64
+                + (w.rank == 0) as u8 as f64
+                + (!ea_roll) as u8 as f64;
         }
         if let Some(hand) = self.vowel_hand {
             m.vowel_viol = "aiou".chars().filter(|&c| self.k[pos[item_id(c).unwrap()]].hand != hand).count() as f64;
@@ -504,6 +524,10 @@ impl Model {
         let same_hand = if j.hand == h.hand { 0.15 } else { 0.0 };
         // j and k must be on different, non-pinky fingers (index/middle or middle/ring)
         let spam = if j.finger == k.finger || j.rank == 0 || k.rank == 0 || (j.rank - k.rank).abs() != 1 || j.rank + k.rank == 1 { 2.0 } else { 0.0 };
+        // NOHL=1: only j/k have to be grouped
+        if std::env::var("NOHL").is_ok() {
+            return pair(j, k, false) + spam;
+        }
         pair(j, k, false) + pair(h, l, true) + same_hand + spam
     }
 }
@@ -516,13 +540,15 @@ struct Obj {
     slack: f64,
     hinge: f64,
     repeat_key: bool, // REPEAT=1: doubles go to a repeat key, so thumb-letter doubles cost nothing
+    near_w: f64, // NEAR_W: cost per key moved away from the NEAR layout
 }
 
 impl Obj {
     fn new(vim_w: f64, base: Option<Metrics>, slack: f64) -> Self {
         let hinge = std::env::var("HINGE").ok().and_then(|v| v.parse().ok()).unwrap_or(100.0);
         let repeat_key = std::env::var("REPEAT").is_ok();
-        Obj { vim_w, base, slack, hinge, repeat_key }
+        let near_w = std::env::var("NEAR_W").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+        Obj { vim_w, base, slack, hinge, repeat_key, near_w }
     }
 }
 
@@ -534,6 +560,8 @@ fn cost(m: &Metrics, o: &Obj) -> f64 {
         + 4.0 * m.effort
         + if o.repeat_key { 0.0 } else { 6.0 * m.thumb_rep }
         + 100.0 * m.vowel_viol
+        + 100.0 * m.pref_viol
+        + o.near_w * m.moved
         + 1.5 * pinky + 2.0 * m.pinky_off;
     for f in m.fingers.iter().take(8) {
         c += 1.0 * (f - 16.0).max(0.0);
@@ -756,6 +784,16 @@ fn multi_anneal(md: &Model, o: &Obj, start: [usize; NITEM], iters: usize, restar
 }
 
 fn print_results(md: &Model, results: Vec<([usize; NITEM], f64)>, detail: usize, max: usize) {
+    // how many restarts ended on each layout (convergence evidence), on stderr
+    let mut hits: HashMap<String, (usize, f64)> = HashMap::new();
+    for (pos, c) in &results {
+        hits.entry(compact(pos)).or_insert((0, *c)).0 += 1;
+    }
+    let mut hv: Vec<_> = hits.into_iter().collect();
+    hv.sort_by(|a, b| a.1 .1.partial_cmp(&b.1 .1).unwrap());
+    for (l, (n, c)) in hv.iter().take(15) {
+        eprintln!("hits {n:>3}  cost {c:.3}  {l}");
+    }
     let mut seen = HashMap::new();
     for (pos, c) in results {
         let key = compact(&pos);

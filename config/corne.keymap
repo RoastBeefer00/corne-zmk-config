@@ -8,6 +8,14 @@
 #include <dt-bindings/zmk/keys.h>
 #include <dt-bindings/zmk/bt.h>
 
+#define BASE 0
+#define OPT  1
+#define SYM  2
+#define NAV  3
+#define SYS  4
+#define NUM  5
+#define WM   6
+
 &sk {
     release-after-ms = <1000>;
     quick-release;
@@ -112,18 +120,34 @@
         compatible = "zmk,combos";
         combo_z {
             timeout-ms = <45>;
+            layers = <BASE>;
             key-positions = <2 3>;
             bindings = <&kp Z>;
         };
         combo_q {
             timeout-ms = <45>;
+            layers = <BASE>;
             key-positions = <3 4>;
             bindings = <&kp Q>;
         };
         combo_qu {
             timeout-ms = <45>;
+            layers = <BASE>;
             key-positions = <2 4>;
             bindings = <&m_qu>;
+        };
+        // OPT layer: on its keys the BASE positions would be o+u, so use rare pairs instead
+        combo_z_opt {
+            timeout-ms = <45>;
+            layers = <OPT>;
+            key-positions = <1 2>;   // J + P
+            bindings = <&kp Z>;
+        };
+        combo_q_opt {
+            timeout-ms = <45>;
+            layers = <OPT>;
+            key-positions = <25 26>; // / + K
+            bindings = <&kp Q>;
         };
     };
 
@@ -252,14 +276,31 @@
 
         default_layer {
             bindings = <
-   &kp TAB     &kp V          &ad_w        &ad_g         &ad_m       &kp J         &kp SEMICOLON  &kp PERIOD  &kp APOS      &ad_fslh     &kp EQUAL   &mo 3
-   &lt 4 ESC   &hm LGUI S     &hm LCTRL N  &hm LSHIFT T  &hm LALT H  &kp K         &kp COMMA      &hm LALT A  &hm LSHIFT E  &hm LCTRL I  &hm LGUI C  &kp ENTER
-   &kp LSHFT   &ad_p          &ad_f        &ad_d         &kp L       &kp X         &kp MINUS      &kp U       &kp O         &ad_y        &kp B       &mo 5
-                                           &kp BSPC      &lt 2 R     &sk LSHFT     &sk LSHFT      &lt 1 SPACE   &kp ENTER
+   &kp TAB     &kp V          &ad_w        &ad_g         &ad_m       &kp J         &kp SEMICOLON  &kp PERIOD  &kp APOS      &ad_fslh     &kp EQUAL   &mo SYS
+   &lt NUM ESC &hm LGUI S     &hm LCTRL N  &hm LSHIFT T  &hm LALT H  &kp K         &kp COMMA      &hm LALT A  &hm LSHIFT E  &hm LCTRL I  &hm LGUI C  &kp ENTER
+   &kp LSHFT   &ad_p          &ad_f        &ad_d         &kp L       &kp X         &kp MINUS      &kp U       &kp O         &ad_y        &kp B       &mo WM
+                                           &kp BSPC      &lt NAV R   &sk LSHFT     &sk LSHFT      &lt SYM SPACE &kp ENTER
             >;
         };
 
-        // Layer 1: Symbols (right thumb space hold)
+        // Layer 1: OPT (alternate base, &to OPT from the system layer)
+        // Analyzer optimum (tools/layout-analyzer): E on the thumb, vowels on the left hand.
+        // Q = / + K and Z = J + P on this layer (the BASE combo positions would be o+u).
+        // ╭───────────────────────────────────────╮ ╭───────────────────────────────────────╮
+        // │       │  J  │  P  │  O  │  U  │  -  │ │  F  │  G  │  D  │  L  │  =  │       │
+        // │       │ Y/G │ H/C │ A/S │ I/A │  .  │ │  B  │ S/A │ T/S │ N/C │ R/G │       │
+        // │       │  /  │  K  │  '  │  ,  │  ;  │ │  V  │  C  │  M  │  W  │  X  │       │
+        // ╰───────────────────╮   BSPC   │ E/NAV │ SHFT │ │ SHFT │ SPC/SYM │ ENT ╭───────────────────╯
+        opt_layer {
+            bindings = <
+   &trans  &kp J          &kp P          &kp O           &kp U          &kp MINUS     &kp F       &kp G          &kp D           &kp L          &kp EQUAL     &trans
+   &trans  &hm LGUI Y     &hm LCTRL H    &hm LSHIFT A    &hm LALT I     &kp PERIOD    &kp B       &hm LALT S     &hm LSHIFT T    &hm LCTRL N    &hm LGUI R    &trans
+   &trans  &kp FSLH       &kp K          &kp APOS        &kp COMMA      &kp SEMI      &kp V       &kp C          &kp M           &kp W          &kp X         &trans
+                                         &trans          &lt NAV E      &trans        &trans      &trans         &trans
+            >;
+        };
+
+        // Layer 2: Symbols (right thumb space hold)
         // Mirrors your layer_keypad symbols
         layer_sym {
             bindings = <
@@ -270,7 +311,7 @@
             >;
         };
 
-        // Layer 2: Nav (lt 2 R)
+        // Layer 3: Nav (left thumb hold)
         // Arrow keys, page nav — mirrors layer_fn
         layer_nav {
             bindings = <
@@ -281,17 +322,17 @@
             >;
         };
 
-        // Layer 3: Bluetooth / System (mo 3 — reached via combo or adjust)
+        // Layer 4: Bluetooth / System (top-right outer key); bottom row right: &to BASE / &to OPT
         layer_bt {
             bindings = <
    &none   &bt BT_SEL 0  &bt BT_SEL 1  &bt BT_SEL 2  &bt BT_SEL 3  &bt BT_SEL 4      &none   &none   &none   &none   &none   &none
    &none   &none         &none         &none         &none         &none             &none   &none   &none   &none   &none   &none
-   &none   &none         &none         &none         &none         &bt BT_CLR        &none   &none   &none   &none   &none   &none
+   &none   &none         &none         &none         &none         &bt BT_CLR        &none   &to BASE &to OPT &none   &none   &none
                                        &none         &none         &none             &none   &none   &none
             >;
         };
 
-        // Layer 4: Numpad (lt 4 ESC hold, mo4)
+        // Layer 5: Numpad (ESC hold)
         // Mirrors layer_num
         layer_num {
             bindings = <
@@ -302,7 +343,7 @@
             >;
         };
 
-        // Layer 5: Window manager
+        // Layer 6: Window manager
         layer_wm {
             bindings = <
    &none  &none  &none  &none  &none  &none      &none  &none  &none  &none  &none  &none
