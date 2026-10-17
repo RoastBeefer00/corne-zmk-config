@@ -49,6 +49,7 @@ const F_SFB: u8 = 1;
 const F_LSB: u8 = 2;
 const F_FSB: u8 = 4;
 const F_HSB: u8 = 8;
+const F_PSC: u8 = 16; // any scissor that involves a pinky
 
 fn bigram_flags(k: &[Key; NSLOT], a: usize, b: usize) -> u8 {
     if a == b {
@@ -83,6 +84,9 @@ fn bigram_flags(k: &[Key; NSLOT], a: usize, b: usize) -> u8 {
                 f |= F_HSB;
             }
         }
+    }
+    if f & (F_FSB | F_HSB) != 0 && (x.rank == 0 || y.rank == 0) {
+        f |= F_PSC;
     }
     f
 }
@@ -220,6 +224,7 @@ struct Metrics {
     lsb: f64,
     fsb: f64,
     hsb: f64,
+    psc: f64,
     alt: f64,
     roll_in: f64,
     roll_out: f64,
@@ -289,6 +294,7 @@ impl Model {
             if fl & F_LSB != 0 { m.lsb += f; }
             if fl & F_FSB != 0 { m.fsb += f; }
             if fl & F_HSB != 0 { m.hsb += f; }
+            if fl & F_PSC != 0 { m.psc += f; }
         }
         for &(a, b, f) in &self.c.skip {
             if self.bflag[pos[a]][pos[b]] & F_SFB != 0 {
@@ -362,7 +368,7 @@ struct Obj {
 
 fn cost(m: &Metrics, o: &Obj) -> f64 {
     let pinky = m.fingers[0] + m.fingers[7];
-    let mut c = 12.0 * m.sfb + 3.0 * m.sfs + 5.0 * m.lsb + 6.0 * m.fsb + 1.5 * m.hsb
+    let mut c = 12.0 * m.sfb + 3.0 * m.sfs + 5.0 * m.lsb + 6.0 * m.fsb + 3.0 * m.hsb + 6.0 * m.psc
         + 2.0 * m.redirect + 5.0 * m.weak_red
         - 0.4 * m.alt - 0.15 * m.roll_in - 0.05 * m.roll_out
         + 4.0 * m.effort
@@ -376,7 +382,7 @@ fn cost(m: &Metrics, o: &Obj) -> f64 {
         let hw: f64 = std::env::var("HINGE").ok().and_then(|v| v.parse().ok()).unwrap_or(100.0);
         let h = |x: f64| hw * x.max(0.0);
         c += h(m.sfb - b.sfb - s) + h(m.sfs - b.sfs - s) + h(m.lsb - b.lsb - s)
-            + h((m.fsb + m.hsb) - (b.fsb + b.hsb) - s) + h(m.fsb - b.fsb - s) + h(b.alt - m.alt - 4.0 * s)
+            + h((m.fsb + m.hsb) - (b.fsb + b.hsb) - s) + h(m.fsb - b.fsb - s) + h(m.psc - b.psc - s) + h(b.alt - m.alt - 4.0 * s)
             + h(m.redirect + m.weak_red - b.redirect - b.weak_red - 4.0 * s)
             + h(10.0 * (m.effort - b.effort) - s)
             + h(b.rows[1] - m.rows[1] - 4.0 * s)
@@ -427,8 +433,8 @@ fn compact(pos: &[usize; NSLOT]) -> String {
 
 fn report(m: &Metrics) {
     println!(
-        "  SFB {:.2}%  SFS {:.2}%  LSB {:.2}%  FSB {:.2}%  HSB {:.2}%  (scissors {:.2}%)",
-        m.sfb, m.sfs, m.lsb, m.fsb, m.hsb, m.fsb + m.hsb
+        "  SFB {:.2}%  SFS {:.2}%  LSB {:.2}%  FSB {:.2}%  HSB {:.2}%  (scissors {:.2}%, pinky scissors {:.2}%)",
+        m.sfb, m.sfs, m.lsb, m.fsb, m.hsb, m.fsb + m.hsb, m.psc
     );
     println!(
         "  Alt {:.1}%  RollIn {:.1}%  RollOut {:.1}%  1hIn {:.1}%  1hOut {:.1}%  Redir {:.2}%  WeakRedir {:.2}%",
@@ -559,7 +565,7 @@ fn main() {
         Some("top") => {
             let pos = parse(&args[2]);
             let ch: Vec<char> = ITEMS.chars().collect();
-            for (name, flag) in [("SFB", F_SFB), ("LSB", F_LSB), ("FSB", F_FSB), ("HSB", F_HSB)] {
+            for (name, flag) in [("SFB", F_SFB), ("LSB", F_LSB), ("FSB", F_FSB), ("HSB", F_HSB), ("PinkyScissor", F_PSC)] {
                 let mut v: Vec<_> = md.c.bi.iter().filter(|(a, b, _)| md.bflag[pos[*a]][pos[*b]] & flag != 0).collect();
                 v.sort_by(|x, y| y.2.partial_cmp(&x.2).unwrap());
                 let s: Vec<String> = v.iter().take(12).map(|(a, b, f)| format!("{}{} {:.3}", ch[*a], ch[*b], f)).collect();

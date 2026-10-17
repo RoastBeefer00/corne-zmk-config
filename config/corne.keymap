@@ -271,15 +271,15 @@
         // Layer 1: Ergo (alternate base, &to ERGO from the system layer)
         // Re-optimized HD-Promethium descendant: lower SFS/scissors/redirects/pinky load, higher alternation.
         // ╭───────────────────────────────────────╮ ╭───────────────────────────────────────╮
-        // │       │  J  │  B  │  D  │  G  │  V  │ │  ;  │  U  │  O  │  Y  │  K  │       │
-        // │       │ L/G │ N/C │ T/S │ S/A │  W  │ │  .  │ I/A │ A/S │ E/C │ H/G │       │
-        // │       │  X  │  P  │  M  │  C  │  F  │ │  =  │  ,  │  '  │  /  │  -  │       │
+        // │       │  X  │  P  │  D  │  G  │  V  │ │  =  │  ,  │  '  │  /  │  -  │       │
+        // │       │ L/G │ N/C │ T/S │ S/A │  W  │ │  ;  │ I/A │ A/S │ E/C │ H/G │       │
+        // │       │  J  │  B  │  M  │  C  │  F  │ │  .  │  U  │  O  │  Y  │  K  │       │
         // ╰───────────────────╮   BSPC   │ R/NAV │ SHFT │ │ SHFT │ SPC/SYM │ ENT ╭───────────────────╯
         ergo_layer {
             bindings = <
-   &trans  &kp J          &kp B          &kp D           &kp G          &kp V         &kp SEMI    &kp U          &kp O           &kp Y          &kp K         &trans
-   &trans  &hm LGUI L     &hm LCTRL N    &hm LSHIFT T    &hm LALT S     &kp W         &kp PERIOD  &hm LALT I     &hm LSHIFT A    &hm LCTRL E    &hm LGUI H    &trans
-   &trans  &kp X          &kp P          &kp M           &kp C          &kp F         &kp EQUAL   &kp COMMA      &kp APOS        &kp FSLH       &kp MINUS     &trans
+   &trans  &kp X          &kp P          &kp D           &kp G          &kp V         &kp EQUAL   &kp COMMA      &kp APOS        &kp FSLH       &kp MINUS     &trans
+   &trans  &hm LGUI L     &hm LCTRL N    &hm LSHIFT T    &hm LALT S     &kp W         &kp SEMI    &hm LALT I     &hm LSHIFT A    &hm LCTRL E    &hm LGUI H    &trans
+   &trans  &kp J          &kp B          &kp M           &kp C          &kp F         &kp PERIOD  &kp U          &kp O           &kp Y          &kp K         &trans
                                          &trans          &trans         &trans        &trans      &trans         &trans
             >;
         };
