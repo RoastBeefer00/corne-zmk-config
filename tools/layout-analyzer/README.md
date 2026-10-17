@@ -10,7 +10,20 @@ export CORPUS=corpus
 ./target/release/kb opt 0 2500000 24 "<baseline>" 0.05           # English layout, no regressions vs baseline beyond slack
 LOCAL=1 HINGE=200 ./target/release/kb sweep 1.5 400000 2 "<baseline>" 0.05 "<seed>"   # vim: pin every jk/hl pair placement
 ./target/release/kb check "<layout>"                             # incremental vs full scoring agree
+./target/release/kb eval both "<layout>"                         # exact eval with a repeat key per thumb (none|left|right|both)
+./candidates.sh > cands.txt && python3 filter.py cands.txt       # dominance filter vs HD-Promethium
 ```
+
+Env knobs: `HINGE` (no-regression penalty weight), `LOCAL=1` (start cool from the seed),
+`VOWELS=left|right` (force a/i/o/u to one hand), `REPEAT=1` (thumb doubles cost nothing),
+`TOPN=n` (list n results), `CORPUS` (directory with the tsv files).
+
+## Repeat keys
+
+`kb eval` rebuilds the n-grams from `corpus/words.tsv` for each layout. The second letter of a
+double is typed with a repeat key: on the left thumb, on the right (space) thumb, or with one on
+each thumb, where the typist picks whichever avoids a same-thumb conflict with the letter before
+or the key after (space included).
 
 ## Metrics
 

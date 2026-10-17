@@ -4,9 +4,15 @@ use std::collections::HashMap;
 use std::fs;
 use rayon::prelude::*;
 
-const NSLOT: usize = 31; // 30 grid keys + left thumb
+const NSLOT: usize = 31; // permutable slots: 30 grid keys + the left-thumb letter
+const NITEM: usize = 33; // the 31 placeable characters + a left- and a right-thumb repeat key
+const NKEY: usize = 33; // NSLOT + a second left-thumb key + the right (space) thumb
 const THUMB: usize = 30;
-const ITEMS: &str = "abcdefghijklmnoprstuvwxy,.';-/=";
+const LTHUMB2: usize = 31;
+const RTHUMB: usize = 32;
+const REP: usize = 31; // repeat key on the left thumb ('@'); never permuted
+const REP_R: usize = 32; // repeat key on the right (space) thumb ('#'); never permuted
+const ITEMS: &str = "abcdefghijklmnoprstuvwxy,.';-/=@#";
 
 // ---------- geometry ----------
 #[derive(Clone, Copy)]
@@ -19,14 +25,14 @@ struct Key {
     effort: f64,
 }
 
-fn keys() -> [Key; NSLOT] {
+fn keys() -> [Key; NKEY] {
     // Effort for a column-staggered Corne, left hand pinky..inner; mirrored for right.
     let eff = [
         [3.0, 2.4, 2.0, 2.2, 3.0],
         [1.6, 1.3, 1.1, 1.0, 2.4],
         [3.2, 2.6, 2.3, 1.6, 3.0],
     ];
-    let mut k = [Key { hand: 0, finger: 0, rank: 0, row: 0, col: 0, effort: 0.0 }; NSLOT];
+    let mut k = [Key { hand: 0, finger: 0, rank: 0, row: 0, col: 0, effort: 0.0 }; NKEY];
     for r in 0..3 {
         for c in 0..10 {
             let (hand, finger, rank, e) = if c < 5 {
@@ -41,6 +47,9 @@ fn keys() -> [Key; NSLOT] {
         }
     }
     k[THUMB] = Key { hand: 0, finger: 8, rank: 4, row: 3, col: 4, effort: 1.0 };
+    // a second left-thumb key (same thumb as the letter) and the right (space) thumb
+    k[LTHUMB2] = Key { hand: 0, finger: 8, rank: 4, row: 3, col: 5, effort: 1.2 };
+    k[RTHUMB] = Key { hand: 1, finger: 9, rank: 4, row: 3, col: 5, effort: 1.0 };
     k
 }
 
@@ -49,8 +58,9 @@ const F_LSB: u8 = 2;
 const F_FSB: u8 = 4;
 const F_HSB: u8 = 8;
 const F_PSC: u8 = 16; // any scissor that involves a pinky
+const F_RP: u8 = 32; // adjacent ring + pinky on one hand (shared tendons), any rows
 
-fn bigram_flags(k: &[Key; NSLOT], a: usize, b: usize) -> u8 {
+fn bigram_flags(k: &[Key; NKEY], a: usize, b: usize) -> u8 {
     if a == b {
         return 0;
     }
@@ -61,7 +71,7 @@ fn bigram_flags(k: &[Key; NSLOT], a: usize, b: usize) -> u8 {
     if x.finger == y.finger {
         return F_SFB;
     }
-    if x.finger == 8 || y.finger == 8 {
+    if x.finger >= 8 || y.finger >= 8 {
         return 0;
     }
     let mut f = 0;
@@ -84,6 +94,9 @@ fn bigram_flags(k: &[Key; NSLOT], a: usize, b: usize) -> u8 {
             }
         }
     }
+    if x.rank + y.rank == 1 {
+        f |= F_RP;
+    }
     if f & (F_FSB | F_HSB) != 0 && (x.rank == 0 || y.rank == 0) {
         f |= F_PSC;
     }
@@ -103,7 +116,7 @@ enum Tri {
     Other,
 }
 
-fn tri_class(k: &[Key; NSLOT], a: usize, b: usize, c: usize) -> Tri {
+fn tri_class(k: &[Key; NKEY], a: usize, b: usize, c: usize) -> Tri {
     let (x, y, z) = (k[a], k[b], k[c]);
     if x.hand != y.hand && y.hand != z.hand {
         return Tri::Alt;
@@ -120,7 +133,7 @@ fn tri_class(k: &[Key; NSLOT], a: usize, b: usize, c: usize) -> Tri {
         if d1 < 0 && d2 < 0 {
             return Tri::OneOut;
         }
-        if x.rank != 3 && y.rank != 3 && z.rank != 3 && x.finger != 8 && y.finger != 8 && z.finger != 8 {
+        if x.rank != 3 && y.rank != 3 && z.rank != 3 && x.finger < 8 && y.finger < 8 && z.finger < 8 {
             return Tri::WeakRedirect;
         }
         return Tri::Redirect;
@@ -134,6 +147,8 @@ fn tri_class(k: &[Key; NSLOT], a: usize, b: usize, c: usize) -> Tri {
 
 // ---------- corpus ----------
 struct Corpus {
+    rep_space: f64, // repeat press directly followed by space (% of bigrams); 0 without a repeat key
+    rep_space_exact: bool, // true when rep_space already counts only presses of the space-thumb repeat key
     rep: Vec<f64>, // same-letter double frequency (% of bigrams) per item
     mono: Vec<(usize, f64)>,
     bi: Vec<(usize, usize, f64)>,
@@ -161,7 +176,7 @@ fn load(dir: &str, tri_cap: usize) -> Corpus {
     };
     let mono = read("mono.tsv").into_iter().map(|(g, f)| (g[0], f)).collect();
     let bi_all = read("bi.tsv");
-    let mut rep = vec![0.0; NSLOT];
+    let mut rep = vec![0.0; NITEM];
     for (g, f) in &bi_all {
         if g[0] == g[1] {
             rep[g[0]] += f;
@@ -173,7 +188,11 @@ fn load(dir: &str, tri_cap: usize) -> Corpus {
     tri.truncate(tri_cap);
     let tt: f64 = tri.iter().map(|x| x.3).sum();
     let tri = tri.into_iter().map(|(a, b, c, f)| (a, b, c, f / tt * 100.0)).collect();
-    Corpus { rep, mono, bi, skip, tri }
+    let rep_space = fs::read_to_string(format!("{dir}/meta.tsv"))
+        .ok()
+        .and_then(|s| s.lines().find_map(|l| l.strip_prefix("rep_space\t").map(|v| v.parse::<f64>().unwrap() * 100.0)))
+        .unwrap_or(0.0);
+    Corpus { rep_space, rep_space_exact: false, rep, mono, bi, skip, tri }
 }
 
 // Vim normal-mode keystroke model: (sequence, relative weight). Uppercase uses the same key
@@ -224,6 +243,8 @@ struct Metrics {
     fsb: f64,
     hsb: f64,
     psc: f64,
+    ring_pinky: f64,
+    vim_rp: f64,
     alt: f64,
     roll_in: f64,
     roll_out: f64,
@@ -232,22 +253,24 @@ struct Metrics {
     redirect: f64,
     weak_red: f64,
     effort: f64,
-    fingers: [f64; 9],
+    fingers: [f64; 10], // 8 = left thumb, 9 = right thumb
     rows: [f64; 4], // top, home, bottom, thumb
     pinky_off: f64,
     thumb_rep: f64, // double taps of the thumb letter (% of bigrams)
+    rep_space_sfb: f64, // repeat key then space on the same (right) thumb, counted into SFB
     sf_dist: f64, // same-finger travel (key units) per 100 bigrams, SFB + 0.5*SFS
     vim_effort: f64,
     vim_sfb: f64,
     vim_scis: f64,
     hjkl: f64,
+    vowel_viol: f64, // VOWELS=left|right: a/i/o/u not on that hand
     tri: [f64; 8], // trigram class totals, indexed by Tri
 }
 
 struct Model {
-    k: [Key; NSLOT],
-    bflag: [[u8; NSLOT]; NSLOT],
-    dist: [[f64; NSLOT]; NSLOT],
+    k: [Key; NKEY],
+    bflag: [[u8; NKEY]; NKEY],
+    dist: [[f64; NKEY]; NKEY],
     tcls: Vec<Tri>,
     c: Corpus,
     // vim keystroke model, pre-normalized: per-item key share and per-pair share (percent)
@@ -259,10 +282,11 @@ struct Model {
     idx_skip: Vec<Vec<([u8; 2], f64)>>,
     idx_tri: Vec<Vec<([u8; 3], f64)>>,
     idx_vim: Vec<Vec<([u8; 2], f64)>>,
+    vowel_hand: Option<u8>,
 }
 
 fn index_by_item<const N: usize>(grams: impl Iterator<Item = ([usize; N], f64)>) -> Vec<Vec<([u8; N], f64)>> {
-    let mut idx = vec![vec![]; NSLOT];
+    let mut idx = vec![vec![]; NITEM];
     for (g, f) in grams {
         for (n, &c) in g.iter().enumerate() {
             if !g[..n].contains(&c) {
@@ -276,22 +300,22 @@ fn index_by_item<const N: usize>(grams: impl Iterator<Item = ([usize; N], f64)>)
 impl Model {
     fn new(c: Corpus) -> Self {
         let k = keys();
-        let mut bflag = [[0u8; NSLOT]; NSLOT];
-        let mut dist = [[0.0f64; NSLOT]; NSLOT];
-        let mut tcls = vec![Tri::Other; NSLOT * NSLOT * NSLOT];
-        for a in 0..NSLOT {
-            for b in 0..NSLOT {
+        let mut bflag = [[0u8; NKEY]; NKEY];
+        let mut dist = [[0.0f64; NKEY]; NKEY];
+        let mut tcls = vec![Tri::Other; NKEY * NKEY * NKEY];
+        for a in 0..NKEY {
+            for b in 0..NKEY {
                 bflag[a][b] = bigram_flags(&k, a, b);
                 dist[a][b] = (((k[a].row - k[b].row) as f64).powi(2) + ((k[a].col - k[b].col) as f64).powi(2)).sqrt();
-                for d in 0..NSLOT {
-                    tcls[(a * NSLOT + b) * NSLOT + d] = tri_class(&k, a, b, d);
+                for d in 0..NKEY {
+                    tcls[(a * NKEY + b) * NKEY + d] = tri_class(&k, a, b, d);
                 }
             }
         }
         let vim = vim_seqs();
         let keys_total: f64 = vim.iter().map(|v| v.w * v.keys.len() as f64).sum();
         let pairs_total: f64 = vim.iter().map(|v| v.w * (v.keys.len() - 1) as f64).sum();
-        let mut vim_mono = vec![0.0; NSLOT];
+        let mut vim_mono = vec![0.0; NITEM];
         let mut pairs: HashMap<(usize, usize), f64> = HashMap::new();
         for v in &vim {
             for (i, &c) in v.keys.iter().enumerate() {
@@ -309,6 +333,11 @@ impl Model {
             idx_tri: index_by_item(c.tri.iter().map(|g| ([g.0, g.1, g.2], g.3))),
             idx_vim: index_by_item(vim_pairs.iter().map(|g| ([g.0, g.1], g.2))),
             k, bflag, dist, tcls, c, vim_mono, vim_pairs,
+            vowel_hand: match std::env::var("VOWELS").as_deref() {
+                Ok("left") => Some(0),
+                Ok("right") => Some(1),
+                _ => None,
+            },
         }
     }
 
@@ -339,6 +368,7 @@ impl Model {
         if fl & F_FSB != 0 { m.fsb += f; }
         if fl & F_HSB != 0 { m.hsb += f; }
         if fl & F_PSC != 0 { m.psc += f; }
+        if fl & F_RP != 0 { m.ring_pinky += f; }
     }
     #[inline]
     fn add_skip(&self, m: &mut Metrics, sa: usize, sb: usize, f: f64, sg: f64) {
@@ -350,16 +380,17 @@ impl Model {
     #[inline]
     fn add_tri(&self, m: &mut Metrics, sa: usize, sb: usize, sc: usize, f: f64, sg: f64) {
         // branch-free: an indexed add is much faster than matching on the class
-        m.tri[self.tcls[(sa * NSLOT + sb) * NSLOT + sc] as usize] += f * sg;
+        m.tri[self.tcls[(sa * NKEY + sb) * NKEY + sc] as usize] += f * sg;
     }
     #[inline]
     fn add_vim_pair(&self, m: &mut Metrics, sa: usize, sb: usize, w: f64, sg: f64) {
         let fl = self.bflag[sa][sb];
         if fl & F_SFB != 0 { m.vim_sfb += w * sg; }
         if fl & (F_FSB | F_HSB | F_LSB) != 0 { m.vim_scis += w * sg; }
+        if fl & F_RP != 0 { m.vim_rp += w * sg; }
     }
 
-    fn finish(&self, m: &mut Metrics, pos: &[usize; NSLOT], with_vim: bool) {
+    fn finish(&self, m: &mut Metrics, pos: &[usize; NITEM], with_vim: bool) {
         m.alt = m.tri[Tri::Alt as usize];
         m.roll_in = m.tri[Tri::RollIn as usize];
         m.roll_out = m.tri[Tri::RollOut as usize];
@@ -367,13 +398,16 @@ impl Model {
         m.one_out = m.tri[Tri::OneOut as usize];
         m.redirect = m.tri[Tri::Redirect as usize];
         m.weak_red = m.tri[Tri::WeakRedirect as usize];
-        m.thumb_rep = (0..NSLOT).find(|&i| pos[i] == THUMB).map_or(0.0, |i| self.c.rep[i]);
+        m.thumb_rep = (0..NITEM).find(|&i| pos[i] == THUMB).map_or(0.0, |i| self.c.rep[i]);
         if with_vim {
             m.hjkl = self.hjkl_penalty(pos);
         }
+        if let Some(hand) = self.vowel_hand {
+            m.vowel_viol = "aiou".chars().filter(|&c| self.k[pos[item_id(c).unwrap()]].hand != hand).count() as f64;
+        }
     }
 
-    fn metrics(&self, pos: &[usize; NSLOT], with_vim: bool) -> Metrics {
+    fn metrics(&self, pos: &[usize; NITEM], with_vim: bool) -> Metrics {
         let mut m = Metrics::default();
         for &(c, f) in &self.c.mono {
             self.add_mono(&mut m, pos[c], f, 1.0);
@@ -395,13 +429,17 @@ impl Model {
                 self.add_vim_pair(&mut m, pos[a], pos[b], w, 1.0);
             }
         }
+        if self.c.rep_space_exact || self.k[pos[REP]].finger == self.k[RTHUMB].finger {
+            m.rep_space_sfb = self.c.rep_space;
+            m.sfb += m.rep_space_sfb;
+        }
         self.finish(&mut m, pos, with_vim);
         m
     }
 
     // Swap items x and y in `pos`, updating `m` incrementally: every n-gram containing x or y is
     // removed at its old slots and re-added at its new slots in one pass.
-    fn swap(&self, m: &mut Metrics, pos: &mut [usize; NSLOT], x: usize, y: usize, with_vim: bool) {
+    fn swap(&self, m: &mut Metrics, pos: &mut [usize; NITEM], x: usize, y: usize, with_vim: bool) {
         let (xb, yb) = (x as u8, y as u8);
         let (sx, sy) = (pos[x], pos[y]);
         let old = |c: u8| pos[c as usize];
@@ -447,21 +485,26 @@ impl Model {
         self.finish(m, pos, with_vim);
     }
 
-    // Pairs, Dvorak-style: j/k adjacent (j left of k on one row, or k stacked above j), and
-    // h/l adjacent with h left of l on one row (no stacking). Neither pair on the thumb; pairs may live anywhere.
-    fn hjkl_penalty(&self, pos: &[usize; NSLOT]) -> f64 {
+    // Pairs, Dvorak/Engram-style: j/k side by side on different adjacent fingers (j left of k), and
+    // h/l adjacent (h left of l on one row, or stacked in either order). Neither pair on the thumb.
+    // Pairs on opposite hands (like Engram) get a small bonus.
+    fn hjkl_penalty(&self, pos: &[usize; NITEM]) -> f64 {
         let id = |c| self.k[pos[item_id(c).unwrap()]];
         let (h, j, k, l) = (id('h'), id('j'), id('k'), id('l'));
         if [h, j, k, l].iter().any(|q| q.finger == 8) {
             return 10.0;
         }
-        let pair = |a: Key, b: Key, vertical_ok: bool| {
+        let pair = |a: Key, b: Key, either_stack: bool| {
             let horiz = ((b.row - a.row).abs() + (b.col - a.col - 1).abs()) as f64
                 + if a.hand != b.hand { 2.0 } else { 0.0 };
-            let vert = ((b.col - a.col).abs() + (a.row - b.row - 1).abs()) as f64;
-            if vertical_ok { horiz.min(vert) } else { horiz }
+            let stack = |lo: Key, hi: Key| ((hi.col - lo.col).abs() + (lo.row - hi.row - 1).abs()) as f64;
+            let vert = if either_stack { stack(a, b).min(stack(b, a)) } else { stack(a, b) };
+            horiz.min(vert)
         };
-        pair(j, k, true) + pair(h, l, false)
+        let same_hand = if j.hand == h.hand { 0.15 } else { 0.0 };
+        // j and k must be on different, non-pinky fingers (index/middle or middle/ring)
+        let spam = if j.finger == k.finger || j.rank == 0 || k.rank == 0 || (j.rank - k.rank).abs() != 1 || j.rank + k.rank == 1 { 2.0 } else { 0.0 };
+        pair(j, k, false) + pair(h, l, true) + same_hand + spam
     }
 }
 
@@ -472,22 +515,25 @@ struct Obj {
     base: Option<Metrics>, // hinge: never worse than this on the headline metrics
     slack: f64,
     hinge: f64,
+    repeat_key: bool, // REPEAT=1: doubles go to a repeat key, so thumb-letter doubles cost nothing
 }
 
 impl Obj {
     fn new(vim_w: f64, base: Option<Metrics>, slack: f64) -> Self {
         let hinge = std::env::var("HINGE").ok().and_then(|v| v.parse().ok()).unwrap_or(100.0);
-        Obj { vim_w, base, slack, hinge }
+        let repeat_key = std::env::var("REPEAT").is_ok();
+        Obj { vim_w, base, slack, hinge, repeat_key }
     }
 }
 
 fn cost(m: &Metrics, o: &Obj) -> f64 {
     let pinky = m.fingers[0] + m.fingers[7];
-    let mut c = 12.0 * m.sfb + 3.0 * m.sfs + 5.0 * m.lsb + 6.0 * m.fsb + 3.0 * m.hsb + 6.0 * m.psc
+    let mut c = 12.0 * m.sfb + 3.0 * m.sfs + 5.0 * m.lsb + 6.0 * m.fsb + 3.0 * m.hsb + 6.0 * m.psc + 3.0 * m.ring_pinky
         + 2.0 * m.redirect + 5.0 * m.weak_red
-        - 0.4 * m.alt - 0.15 * m.roll_in - 0.05 * m.roll_out
+        - 0.4 * m.alt - 0.4 * m.roll_in - 0.2 * m.roll_out
         + 4.0 * m.effort
-        + 6.0 * m.thumb_rep
+        + if o.repeat_key { 0.0 } else { 6.0 * m.thumb_rep }
+        + 100.0 * m.vowel_viol
         + 1.5 * pinky + 2.0 * m.pinky_off;
     for f in m.fingers.iter().take(8) {
         c += 1.0 * (f - 16.0).max(0.0);
@@ -496,7 +542,7 @@ fn cost(m: &Metrics, o: &Obj) -> f64 {
         let s = o.slack;
         let h = |x: f64| o.hinge * x.max(0.0);
         c += h(m.sfb - b.sfb - s) + h(m.sfs - b.sfs - s) + h(m.lsb - b.lsb - s)
-            + h((m.fsb + m.hsb) - (b.fsb + b.hsb) - s) + h(m.fsb - b.fsb - s) + h(m.psc - b.psc - s) + h(b.alt - m.alt - 4.0 * s)
+            + h((m.fsb + m.hsb) - (b.fsb + b.hsb) - s) + h(m.fsb - b.fsb - s) + h(m.psc - b.psc - s) + h(m.ring_pinky - b.ring_pinky - s) + h(b.alt - m.alt - 4.0 * s) + h(b.roll_in - m.roll_in - 4.0 * s)
             + h(m.redirect + m.weak_red - b.redirect - b.weak_red - 4.0 * s)
             + h(10.0 * (m.effort - b.effort) - s)
             + h(b.rows[1] - m.rows[1] - 4.0 * s)
@@ -506,25 +552,51 @@ fn cost(m: &Metrics, o: &Obj) -> f64 {
             + h(pinky - (b.fingers[0] + b.fingers[7]) - 4.0 * s);
     }
     if o.vim_w > 0.0 {
-        c += o.vim_w * (2.0 * m.vim_effort + 0.3 * m.vim_sfb + 0.1 * m.vim_scis) + 30.0 * m.hjkl;
+        c += o.vim_w * (2.0 * m.vim_effort + 0.3 * m.vim_sfb + 0.1 * m.vim_scis + 0.3 * m.vim_rp) + 30.0 * m.hjkl;
     }
     c
 }
 
 // ---------- layout I/O ----------
-fn parse(s: &str) -> [usize; NSLOT] {
+// REPKEY=right puts the repeat key on the space thumb, REPKEY=grid lets it be placed on the grid
+// in place of '=' (which is parked off-board); otherwise it sits on the left thumb.
+fn rep_slot() -> usize {
+    if std::env::var("REPKEY").is_ok_and(|v| v == "right") { RTHUMB } else { LTHUMB2 }
+}
+
+fn rep_grid() -> bool {
+    std::env::var("REPKEY").is_ok_and(|v| v == "grid")
+}
+
+// The one item that never moves: the repeat key, or '=' when the repeat key is on the grid.
+fn parked() -> usize {
+    if rep_grid() { item_id('=').unwrap() } else { REP }
+}
+
+fn parse(s: &str) -> [usize; NITEM] {
     let s: Vec<char> = s.chars().filter(|c| !c.is_whitespace()).collect();
     assert_eq!(s.len(), NSLOT, "need 30 grid chars + thumb");
-    let mut pos = [usize::MAX; NSLOT];
+    let mut pos = [usize::MAX; NITEM];
     for (slot, &c) in s.iter().enumerate() {
         pos[item_id(c).unwrap_or_else(|| panic!("bad char {c}"))] = slot;
     }
+    if rep_grid() {
+        // the layout string carries '@' on the grid; '=' goes off-board
+        let eq = item_id('=').unwrap();
+        if pos[REP] == usize::MAX {
+            pos[REP] = pos[eq];
+        }
+        pos[eq] = LTHUMB2;
+    } else {
+        pos[REP] = rep_slot();
+    }
+    pos[REP_R] = RTHUMB;
     assert!(pos.iter().all(|&p| p != usize::MAX), "missing chars");
     pos
 }
 
-fn show(pos: &[usize; NSLOT]) -> String {
-    let mut g = [' '; NSLOT];
+fn show(pos: &[usize; NITEM]) -> String {
+    let mut g = [' '; NKEY];
     for (i, c) in ITEMS.chars().enumerate() {
         g[pos[i]] = c;
     }
@@ -536,8 +608,8 @@ fn show(pos: &[usize; NSLOT]) -> String {
     out + &format!("        [{}]\n", g[THUMB])
 }
 
-fn compact(pos: &[usize; NSLOT]) -> String {
-    let mut g = [' '; NSLOT];
+fn compact(pos: &[usize; NITEM]) -> String {
+    let mut g = [' '; NKEY];
     for (i, c) in ITEMS.chars().enumerate() {
         g[pos[i]] = c;
     }
@@ -547,8 +619,8 @@ fn compact(pos: &[usize; NSLOT]) -> String {
 
 fn report(m: &Metrics) {
     println!(
-        "  SFB {:.2}%  SFS {:.2}%  LSB {:.2}%  FSB {:.2}%  HSB {:.2}%  (scissors {:.2}%, pinky scissors {:.2}%)",
-        m.sfb, m.sfs, m.lsb, m.fsb, m.hsb, m.fsb + m.hsb, m.psc
+        "  SFB {:.2}%  SFS {:.2}%  LSB {:.2}%  FSB {:.2}%  HSB {:.2}%  (scissors {:.2}%, pinky scissors {:.2}%)  RingPinky {:.2}%",
+        m.sfb, m.sfs, m.lsb, m.fsb, m.hsb, m.fsb + m.hsb, m.psc, m.ring_pinky
     );
     println!(
         "  Alt {:.1}%  RollIn {:.1}%  RollOut {:.1}%  1hIn {:.1}%  1hOut {:.1}%  Redir {:.2}%  WeakRedir {:.2}%",
@@ -556,17 +628,17 @@ fn report(m: &Metrics) {
     );
     let f = m.fingers;
     println!(
-        "  Effort {:.3}  Fingers LP {:.1} LR {:.1} LM {:.1} LI {:.1} | LT {:.1} | RI {:.1} RM {:.1} RR {:.1} RP {:.1}  (L {:.1} / R {:.1})",
-        m.effort, f[0], f[1], f[2], f[3], f[8], f[4], f[5], f[6], f[7],
+        "  Effort {:.3}  Fingers LP {:.1} LR {:.1} LM {:.1} LI {:.1} | LT {:.1} RT {:.1} | RI {:.1} RM {:.1} RR {:.1} RP {:.1}  (L {:.1} / R {:.1})",
+        m.effort, f[0], f[1], f[2], f[3], f[8], f[9], f[4], f[5], f[6], f[7],
         f[0] + f[1] + f[2] + f[3] + f[8], f[4] + f[5] + f[6] + f[7]
     );
     println!(
-        "  Rows top {:.1}% home {:.1}% bottom {:.1}% thumb {:.1}%  PinkyOffHome {:.2}%  SameFingerDist {:.3}  In/Out {:.2}  ThumbDoubles {:.2}%",
-        m.rows[0], m.rows[1], m.rows[2], m.rows[3], m.pinky_off, m.sf_dist, m.roll_in / m.roll_out, m.thumb_rep
+        "  Rows top {:.1}% home {:.1}% bottom {:.1}% thumb {:.1}%  PinkyOffHome {:.2}%  SameFingerDist {:.3}  In/Out {:.2}  ThumbDoubles {:.2}%  Rep->Space SFB {:.2}%",
+        m.rows[0], m.rows[1], m.rows[2], m.rows[3], m.pinky_off, m.sf_dist, m.roll_in / m.roll_out, m.thumb_rep, m.rep_space_sfb
     );
     println!(
-        "  Vim: effort/key {:.3}  SFB {:.2}%  scissor+LSB {:.2}%  hjkl-geometry {:.0}",
-        m.vim_effort, m.vim_sfb, m.vim_scis, m.hjkl
+        "  Vim: effort/key {:.3}  SFB {:.2}%  scissor+LSB {:.2}%  ring-pinky {:.2}%  hjkl-geometry {:.2}",
+        m.vim_effort, m.vim_sfb, m.vim_scis, m.vim_rp, m.hjkl
     );
 }
 
@@ -591,17 +663,17 @@ fn is_letter(i: usize) -> bool {
     ITEMS.as_bytes()[i].is_ascii_lowercase()
 }
 
-fn legal(pos: &[usize; NSLOT], a: usize, b: usize) -> bool {
+fn legal(pos: &[usize; NITEM], a: usize, b: usize) -> bool {
     a != b && !((pos[a] == THUMB && !is_letter(b)) || (pos[b] == THUMB && !is_letter(a)))
 }
 
 // Simulated annealing over item swaps with incremental scoring, then a steepest-descent polish.
 // `local` starts from `start` at a low temperature instead of from a shuffle.
-fn anneal(md: &Model, o: &Obj, start: [usize; NSLOT], iters: usize, seed: u64, fixed: &[usize], local: bool) -> ([usize; NSLOT], f64) {
+fn anneal(md: &Model, o: &Obj, start: [usize; NITEM], iters: usize, seed: u64, fixed: &[usize], local: bool) -> ([usize; NITEM], f64) {
     let mut rng = Rng(seed | 1);
     let vim = o.vim_w > 0.0;
     let mut pos = start;
-    let free: Vec<usize> = (0..NSLOT).filter(|i| !fixed.contains(i)).collect();
+    let free: Vec<usize> = (0..NITEM).filter(|&i| !fixed.contains(&i) && i != parked() && i != REP_R).collect();
     if !local {
         for _ in 0..200 {
             let (a, b) = (free[rng.n(free.len())], free[rng.n(free.len())]);
@@ -674,7 +746,7 @@ fn seed_for(i: usize) -> u64 {
 }
 
 // Run `restarts` independent anneals in parallel and return them best-first.
-fn multi_anneal(md: &Model, o: &Obj, start: [usize; NSLOT], iters: usize, restarts: usize, fixed: &[usize], local: bool) -> Vec<([usize; NSLOT], f64)> {
+fn multi_anneal(md: &Model, o: &Obj, start: [usize; NITEM], iters: usize, restarts: usize, fixed: &[usize], local: bool) -> Vec<([usize; NITEM], f64)> {
     let mut r: Vec<_> = (0..restarts)
         .into_par_iter()
         .map(|i| anneal(md, o, start, iters, seed_for(i), fixed, local))
@@ -683,7 +755,7 @@ fn multi_anneal(md: &Model, o: &Obj, start: [usize; NSLOT], iters: usize, restar
     r
 }
 
-fn print_results(md: &Model, results: Vec<([usize; NSLOT], f64)>, detail: usize, max: usize) {
+fn print_results(md: &Model, results: Vec<([usize; NITEM], f64)>, detail: usize, max: usize) {
     let mut seen = HashMap::new();
     for (pos, c) in results {
         let key = compact(&pos);
@@ -702,9 +774,160 @@ fn print_results(md: &Model, results: Vec<([usize; NSLOT], f64)>, detail: usize,
 }
 
 // Put item x at slot s by swapping with whatever is there.
-fn place(pos: &mut [usize; NSLOT], x: usize, s: usize) {
-    let y = (0..NSLOT).find(|&i| pos[i] == s).unwrap();
+fn place(pos: &mut [usize; NITEM], x: usize, s: usize) {
+    let y = (0..NITEM).find(|&i| pos[i] == s).unwrap();
     pos.swap(x, y);
+}
+
+// ---------- exact per-layout corpus (for repeat-key modes) ----------
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum RepMode {
+    None,  // doubles are same-key presses
+    Left,  // one repeat key on the left thumb
+    Right, // one repeat key on the right (space) thumb
+    Both,  // one on each thumb; the typist picks whichever avoids a same-thumb conflict
+}
+
+// Builds n-gram tables from words.tsv for one specific layout, the same way gen_corpus.py does,
+// but replacing the second letter of each double with the repeat key chosen under `mode`.
+fn corpus_from_words(dir: &str, pos: &[usize; NITEM], k: &[Key; NKEY], mode: RepMode, tri_cap: usize) -> Corpus {
+    const P_COMMA: f64 = 0.055;
+    const P_PERIOD: f64 = 0.050;
+    const P_SEMI: f64 = 0.002;
+    const JOINS: [(char, f64); 2] = [('-', 0.004), ('/', 0.0008)];
+    let text = fs::read_to_string(format!("{dir}/words.tsv")).expect("words.tsv");
+    let sfb = |a: usize, b: usize| (a != b && bigram_flags(k, a, b) & F_SFB != 0) as u8;
+    let mut mono = vec![0.0; NITEM];
+    let mut bi: HashMap<[usize; 2], f64> = HashMap::new();
+    let mut skip: HashMap<[usize; 2], f64> = HashMap::new();
+    let mut tri: HashMap<[usize; 3], f64> = HashMap::new();
+    let (mut first, mut last) = (vec![0.0; NITEM], vec![0.0; NITEM]);
+    let (mut words_tot, mut rep_space) = (0.0, 0.0);
+    for line in text.lines() {
+        let (w, f) = line.split_once('\t').unwrap();
+        let f: f64 = f.parse().unwrap();
+        let ch: Vec<char> = w.chars().collect();
+        words_tot += f;
+        if let Some(x) = item_id(ch[0]) { first[x] += f; }
+        if let Some(x) = item_id(*ch.last().unwrap()) { last[x] += f; }
+        for (tail, p) in [(Some(','), P_COMMA), (Some('.'), P_PERIOD), (Some(';'), P_SEMI), (None, 1.0 - P_COMMA - P_PERIOD - P_SEMI)] {
+            let g = f * p;
+            let mut seq: Vec<Option<usize>> = Vec::with_capacity(ch.len() + 1);
+            let mut prev_rep = false;
+            for i in 0..ch.len() {
+                let c = ch[i];
+                let double = mode != RepMode::None && i > 0 && c == ch[i - 1] && c.is_alphabetic() && !prev_rep;
+                match (double, item_id(c)) {
+                    (true, Some(x)) => {
+                        // the key after the repeat press: next letter, trailing punctuation, or space (right thumb)
+                        // None = space, which is its own key on the right thumb
+                        let next = if i + 1 < ch.len() { item_id(ch[i + 1]).map(|y| Some(pos[y])) } else { Some(tail.map(|t| pos[item_id(t).unwrap()])) };
+                        let clash = |r: usize| {
+                            sfb(pos[x], pos[r])
+                                + match next {
+                                    Some(Some(n)) => sfb(pos[r], n),
+                                    Some(None) => (k[pos[r]].finger == k[RTHUMB].finger) as u8,
+                                    None => 0,
+                                }
+                        };
+                        let r = match mode {
+                            RepMode::Left => REP,
+                            RepMode::Right => REP_R,
+                            _ => match clash(REP).cmp(&clash(REP_R)) {
+                                std::cmp::Ordering::Less => REP,
+                                std::cmp::Ordering::Greater => REP_R,
+                                _ => if k[pos[x]].hand == 0 { REP_R } else { REP },
+                            },
+                        };
+                        if pos[r] == RTHUMB && i + 1 == ch.len() && tail.is_none() {
+                            rep_space += g;
+                        }
+                        seq.push(Some(r));
+                        prev_rep = true;
+                    }
+                    (_, id) => {
+                        seq.push(id);
+                        prev_rep = false;
+                    }
+                }
+            }
+            if let Some(t) = tail {
+                seq.push(item_id(t));
+            }
+            for x in seq.iter().flatten() {
+                mono[*x] += g;
+            }
+            for w2 in seq.windows(2) {
+                if let [Some(a), Some(b)] = w2 { *bi.entry([*a, *b]).or_default() += g; }
+            }
+            for w3 in seq.windows(3) {
+                if let (Some(a), Some(c)) = (w3[0], w3[2]) { *skip.entry([a, c]).or_default() += g; }
+                if let [Some(a), Some(b), Some(c)] = w3 { *tri.entry([*a, *b, *c]).or_default() += g; }
+            }
+        }
+    }
+    // hyphen / slash joins between words, from first/last-letter distributions
+    for (sym, p) in JOINS {
+        let s = item_id(sym).unwrap();
+        mono[s] += words_tot * p;
+        for a in 0..NITEM {
+            if last[a] > 0.0 { *bi.entry([a, s]).or_default() += p * last[a]; }
+            if first[a] > 0.0 { *bi.entry([s, a]).or_default() += p * first[a]; }
+            for b in 0..NITEM {
+                if last[a] > 0.0 && first[b] > 0.0 {
+                    let g = p * last[a] * first[b] / words_tot;
+                    *tri.entry([a, s, b]).or_default() += g;
+                    *skip.entry([a, b]).or_default() += g;
+                }
+            }
+        }
+    }
+    let pct = |v: f64, t: f64| v / t * 100.0;
+    let mono_t: f64 = mono.iter().sum();
+    let bi_t: f64 = bi.values().sum();
+    let skip_t: f64 = skip.values().sum();
+    let mut rep = vec![0.0; NITEM];
+    for (g, f) in &bi {
+        if g[0] == g[1] { rep[g[0]] += pct(*f, bi_t); }
+    }
+    let mut tri: Vec<_> = tri.into_iter().map(|(g, f)| (g[0], g[1], g[2], f)).collect();
+    tri.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap());
+    tri.truncate(tri_cap);
+    let tri_t: f64 = tri.iter().map(|t| t.3).sum();
+    Corpus {
+        rep_space: pct(rep_space, bi_t),
+        rep_space_exact: true,
+        rep,
+        mono: mono.iter().enumerate().filter(|(_, f)| **f > 0.0).map(|(i, f)| (i, pct(*f, mono_t))).collect(),
+        bi: bi.iter().filter(|(g, _)| g[0] != g[1]).map(|(g, f)| (g[0], g[1], pct(*f, bi_t))).collect(),
+        skip: skip.iter().filter(|(g, _)| g[0] != g[1]).map(|(g, f)| (g[0], g[1], pct(*f, skip_t))).collect(),
+        tri: tri.into_iter().map(|(a, b, c, f)| (a, b, c, pct(f, tri_t))).collect(),
+    }
+}
+
+// Metrics where `m` is worse than `b` by more than `tol` (percentage points; effort and ratios scaled).
+fn regressions(m: &Metrics, b: &Metrics, tol: f64) -> Vec<String> {
+    let pk = |x: &Metrics| x.fingers[0] + x.fingers[7];
+    let lower = [
+        ("SFB", m.sfb, b.sfb), ("SFS", m.sfs, b.sfs), ("LSB", m.lsb, b.lsb), ("FSB", m.fsb, b.fsb),
+        ("HSB", m.hsb, b.hsb), ("pinky scissors", m.psc, b.psc), ("ring-pinky", m.ring_pinky, b.ring_pinky),
+        ("redirects", m.redirect + m.weak_red, b.redirect + b.weak_red), ("weak redirects", m.weak_red, b.weak_red),
+        ("effort x100", m.effort * 100.0, b.effort * 100.0), ("pinky load", pk(m), pk(b)),
+        ("pinky off-home", m.pinky_off, b.pinky_off), ("same-finger dist", m.sf_dist, b.sf_dist),
+        ("thumb doubles", m.thumb_rep, b.thumb_rep),
+    ];
+    let higher = [
+        ("alternation", m.alt, b.alt), ("rolls in", m.roll_in, b.roll_in),
+        ("in/out x10", 10.0 * m.roll_in / m.roll_out, 10.0 * b.roll_in / b.roll_out), ("home row", m.rows[1], b.rows[1]),
+    ];
+    let mut out = vec![];
+    for (n, v, base) in lower {
+        if v > base + tol { out.push(format!("{n} {v:.2} vs {base:.2}")); }
+    }
+    for (n, v, base) in higher {
+        if v < base - tol { out.push(format!("{n} {v:.2} vs {base:.2}")); }
+    }
+    out
 }
 
 fn main() {
@@ -729,11 +952,32 @@ fn main() {
         Some("top") => {
             let pos = parse(&args[2]);
             let ch: Vec<char> = ITEMS.chars().collect();
-            for (name, flag) in [("SFB", F_SFB), ("LSB", F_LSB), ("FSB", F_FSB), ("HSB", F_HSB), ("PinkyScissor", F_PSC)] {
+            for (name, flag) in [("SFB", F_SFB), ("LSB", F_LSB), ("FSB", F_FSB), ("HSB", F_HSB), ("PinkyScissor", F_PSC), ("RingPinky", F_RP)] {
                 let mut v: Vec<_> = md.c.bi.iter().filter(|(a, b, _)| md.bflag[pos[*a]][pos[*b]] & flag != 0).collect();
                 v.sort_by(|x, y| y.2.partial_cmp(&x.2).unwrap());
                 let s: Vec<String> = v.iter().take(12).map(|(a, b, f)| format!("{}{} {:.3}", ch[*a], ch[*b], f)).collect();
                 println!("{name}: {}", s.join(", "));
+            }
+        }
+        Some("eval") => {
+            // eval <none|left|right|both> <layout>...  exact repeat-key modelling, compared with PM (no repeat key)
+            let mode = match args[2].as_str() {
+                "left" => RepMode::Left,
+                "right" => RepMode::Right,
+                "both" => RepMode::Both,
+                _ => RepMode::None,
+            };
+            let k = keys();
+            let pm = parse("vwgmj;.'/=snthk,aeicfpdlx-uoyb r");
+            let base = Model::new(corpus_from_words(&dir, &pm, &k, RepMode::None, 4000)).metrics(&pm, false);
+            for l in &args[3..] {
+                let pos = parse(l);
+                let em = Model::new(corpus_from_words(&dir, &pos, &k, mode, 4000));
+                let m = em.metrics(&pos, true);
+                print!("{}", show(&pos));
+                report(&m);
+                let r = regressions(&m, &base, 0.02);
+                println!("  vs PM ({} worse beyond 0.02): {}\n", r.len(), if r.is_empty() { "none - dominates PM".into() } else { r.join(", ") });
             }
         }
         Some("check") => {
@@ -755,16 +999,26 @@ fn main() {
             println!("max |incremental - full| cost over 100k swaps: {worst:.2e}");
         }
         Some("opt") => {
-            // opt <vim_w> <iters> <restarts> <base-layout|-> <slack> [fixed chars]
+            // opt <vim_w> <iters> <restarts> <base-layout|-> <slack> [fixed chars] [seed-layout]
             let vim_w: f64 = args[2].parse().unwrap();
             let iters: usize = args[3].parse().unwrap();
             let restarts: usize = args[4].parse().unwrap();
             let base = if args[5] == "-" { None } else { Some(md.metrics(&parse(&args[5]), true)) };
             let slack: f64 = args[6].parse().unwrap();
-            let start = if args[5] == "-" { parse("vwgmj;.'/=snthk,aeicpfdlx-uoyb r") } else { parse(&args[5]) };
             let fixed: Vec<usize> = args.get(7).map(|s| s.chars().map(|c| item_id(c).unwrap()).collect()).unwrap_or_default();
+            // start layout: explicit seed, else the baseline, else Promethium
+            let start = match (args.get(8), args[5].as_str()) {
+                (Some(seed), _) => parse(seed),
+                (None, "-") => parse("vwgmj;.'/=snthk,aeicpfdlx-uoyb r"),
+                (None, b) => parse(b),
+            };
             let o = Obj::new(vim_w, base, slack);
-            print_results(&md, multi_anneal(&md, &o, start, iters, restarts, &fixed, local), 3, 6);
+            // TOPN=n lists up to n distinct results without detail (for post-hoc filtering)
+            let (detail, max) = match std::env::var("TOPN").ok().and_then(|v| v.parse().ok()) {
+                Some(n) => (0, n),
+                None => (3, 6),
+            };
+            print_results(&md, multi_anneal(&md, &o, start, iters, restarts, &fixed, local), detail, max);
         }
         Some("sweep") => {
             // sweep <vim_w> <iters> <restarts> <base-layout> <slack> [seed-layout]
@@ -777,9 +1031,16 @@ fn main() {
             let seed = args.get(7).map(|s| parse(s)).unwrap_or(base_pos);
             let o = Obj::new(vim_w, Some(md.metrics(&base_pos, true)), slack);
             let cols = [1usize, 2, 3, 5, 6, 7]; // pair start columns that keep both keys off the pinkies
-            let mut jk: Vec<(usize, usize)> = (0..3).flat_map(|r| cols.map(|c| (r * 10 + c, r * 10 + c + 1))).collect();
-            jk.extend((1..3).flat_map(|r| (1..9).map(move |c| (r * 10 + c, (r - 1) * 10 + c))));
-            let hl: Vec<(usize, usize)> = (0..3).flat_map(|r| cols.map(|c| (r * 10 + c, r * 10 + c + 1))).collect();
+            // j/k side by side on two different adjacent fingers (ring+middle or middle+index) so they can be spammed
+            let jk: Vec<(usize, usize)> = (0..3).flat_map(|r| [1usize, 2, 6, 7].map(|c| (r * 10 + c, r * 10 + c + 1))).collect();
+            let mut hl: Vec<(usize, usize)> = (0..3).flat_map(|r| cols.map(|c| (r * 10 + c, r * 10 + c + 1))).collect();
+            // stacked h/l in either order (Engram puts l above h on the index)
+            for r in 1..3 {
+                for c in 1..9 {
+                    hl.push((r * 10 + c, (r - 1) * 10 + c));
+                    hl.push(((r - 1) * 10 + c, r * 10 + c));
+                }
+            }
             let (h, j, k, l) = (item_id('h').unwrap(), item_id('j').unwrap(), item_id('k').unwrap(), item_id('l').unwrap());
             let fixed = [h, j, k, l];
             let mut starts = vec![];
@@ -792,7 +1053,7 @@ fn main() {
                     for (x, s) in [(h, sh), (j, sj), (k, sk), (l, sl)] {
                         place(&mut p, x, s);
                     }
-                    if !(0..NSLOT).all(|i| p[i] != THUMB || is_letter(i)) {
+                    if !(0..NITEM).all(|i| p[i] != THUMB || is_letter(i)) {
                         continue;
                     }
                     starts.push(p);
@@ -807,6 +1068,6 @@ fn main() {
             results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
             print_results(&md, results, 5, 25);
         }
-        _ => eprintln!("usage: kb analyze <layout>... | top <layout> | check <layout> | opt <vim_w> <iters> <restarts> <base|-> <slack> [fixed] | sweep <vim_w> <iters> <restarts> <base> <slack> [seed]"),
+        _ => eprintln!("usage: kb analyze <layout>... | top <layout> | check <layout> | opt <vim_w> <iters> <restarts> <base|-> <slack> [fixed] [seed] | sweep <vim_w> <iters> <restarts> <base> <slack> [seed]"),
     }
 }
