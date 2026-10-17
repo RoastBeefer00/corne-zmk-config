@@ -2,8 +2,7 @@
 // Metrics mirror cyanophage's: SFB, SFS, LSB, scissors, alternation, rolls, redirects.
 use std::collections::HashMap;
 use std::fs;
-use std::sync::Arc;
-use std::thread;
+use rayon::prelude::*;
 
 const NSLOT: usize = 31; // 30 grid keys + left thumb
 const THUMB: usize = 30;
@@ -217,7 +216,7 @@ fn vim_seqs() -> Vec<VimSeq> {
 }
 
 // ---------- metrics ----------
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Copy, Debug)]
 struct Metrics {
     sfb: f64,
     sfs: f64,
@@ -242,6 +241,7 @@ struct Metrics {
     vim_sfb: f64,
     vim_scis: f64,
     hjkl: f64,
+    tri: [f64; 8], // trigram class totals, indexed by Tri
 }
 
 struct Model {
@@ -250,7 +250,27 @@ struct Model {
     dist: [[f64; NSLOT]; NSLOT],
     tcls: Vec<Tri>,
     c: Corpus,
-    vim: Vec<VimSeq>,
+    // vim keystroke model, pre-normalized: per-item key share and per-pair share (percent)
+    vim_mono: Vec<f64>,
+    vim_pairs: Vec<(usize, usize, f64)>,
+    // per item: indices of the n-grams that contain it (each n-gram listed once per item)
+    // stored inline (not as indices) so the swap loop walks contiguous memory
+    idx_bi: Vec<Vec<([u8; 2], f64)>>,
+    idx_skip: Vec<Vec<([u8; 2], f64)>>,
+    idx_tri: Vec<Vec<([u8; 3], f64)>>,
+    idx_vim: Vec<Vec<([u8; 2], f64)>>,
+}
+
+fn index_by_item<const N: usize>(grams: impl Iterator<Item = ([usize; N], f64)>) -> Vec<Vec<([u8; N], f64)>> {
+    let mut idx = vec![vec![]; NSLOT];
+    for (g, f) in grams {
+        for (n, &c) in g.iter().enumerate() {
+            if !g[..n].contains(&c) {
+                idx[c].push((g.map(|x| x as u8), f));
+            }
+        }
+    }
+    idx
 }
 
 impl Model {
@@ -268,76 +288,163 @@ impl Model {
                 }
             }
         }
-        Model { k, bflag, dist, tcls, c, vim: vim_seqs() }
+        let vim = vim_seqs();
+        let keys_total: f64 = vim.iter().map(|v| v.w * v.keys.len() as f64).sum();
+        let pairs_total: f64 = vim.iter().map(|v| v.w * (v.keys.len() - 1) as f64).sum();
+        let mut vim_mono = vec![0.0; NSLOT];
+        let mut pairs: HashMap<(usize, usize), f64> = HashMap::new();
+        for v in &vim {
+            for (i, &c) in v.keys.iter().enumerate() {
+                vim_mono[c] += v.w / keys_total;
+                if i > 0 && v.keys[i - 1] != c {
+                    *pairs.entry((v.keys[i - 1], c)).or_default() += v.w * 100.0 / pairs_total;
+                }
+            }
+        }
+        let mut vim_pairs: Vec<_> = pairs.into_iter().map(|((a, b), w)| (a, b, w)).collect();
+        vim_pairs.sort_by(|x, y| (x.0, x.1).cmp(&(y.0, y.1)));
+        Model {
+            idx_bi: index_by_item(c.bi.iter().map(|g| ([g.0, g.1], g.2))),
+            idx_skip: index_by_item(c.skip.iter().map(|g| ([g.0, g.1], g.2))),
+            idx_tri: index_by_item(c.tri.iter().map(|g| ([g.0, g.1, g.2], g.3))),
+            idx_vim: index_by_item(vim_pairs.iter().map(|g| ([g.0, g.1], g.2))),
+            k, bflag, dist, tcls, c, vim_mono, vim_pairs,
+        }
+    }
+
+    // ---- per-n-gram contributions; `sg` is +1 to add, -1 to remove ----
+    #[inline]
+    fn add_mono(&self, m: &mut Metrics, s: usize, f: f64, sg: f64) {
+        let k = self.k[s];
+        let f = f * sg;
+        m.effort += f * k.effort / 100.0;
+        m.fingers[k.finger as usize] += f;
+        m.rows[k.row as usize] += f;
+        if k.rank == 0 && k.row != 1 {
+            m.pinky_off += f;
+        }
+    }
+    #[inline]
+    fn add_bi(&self, m: &mut Metrics, sa: usize, sb: usize, f: f64, sg: f64) {
+        let fl = self.bflag[sa][sb];
+        if fl == 0 {
+            return;
+        }
+        let f = f * sg;
+        if fl & F_SFB != 0 {
+            m.sfb += f;
+            m.sf_dist += f * self.dist[sa][sb];
+        }
+        if fl & F_LSB != 0 { m.lsb += f; }
+        if fl & F_FSB != 0 { m.fsb += f; }
+        if fl & F_HSB != 0 { m.hsb += f; }
+        if fl & F_PSC != 0 { m.psc += f; }
+    }
+    #[inline]
+    fn add_skip(&self, m: &mut Metrics, sa: usize, sb: usize, f: f64, sg: f64) {
+        if self.bflag[sa][sb] & F_SFB != 0 {
+            m.sfs += f * sg;
+            m.sf_dist += 0.5 * f * sg * self.dist[sa][sb];
+        }
+    }
+    #[inline]
+    fn add_tri(&self, m: &mut Metrics, sa: usize, sb: usize, sc: usize, f: f64, sg: f64) {
+        // branch-free: an indexed add is much faster than matching on the class
+        m.tri[self.tcls[(sa * NSLOT + sb) * NSLOT + sc] as usize] += f * sg;
+    }
+    #[inline]
+    fn add_vim_pair(&self, m: &mut Metrics, sa: usize, sb: usize, w: f64, sg: f64) {
+        let fl = self.bflag[sa][sb];
+        if fl & F_SFB != 0 { m.vim_sfb += w * sg; }
+        if fl & (F_FSB | F_HSB | F_LSB) != 0 { m.vim_scis += w * sg; }
+    }
+
+    fn finish(&self, m: &mut Metrics, pos: &[usize; NSLOT], with_vim: bool) {
+        m.alt = m.tri[Tri::Alt as usize];
+        m.roll_in = m.tri[Tri::RollIn as usize];
+        m.roll_out = m.tri[Tri::RollOut as usize];
+        m.one_in = m.tri[Tri::OneIn as usize];
+        m.one_out = m.tri[Tri::OneOut as usize];
+        m.redirect = m.tri[Tri::Redirect as usize];
+        m.weak_red = m.tri[Tri::WeakRedirect as usize];
+        m.thumb_rep = (0..NSLOT).find(|&i| pos[i] == THUMB).map_or(0.0, |i| self.c.rep[i]);
+        if with_vim {
+            m.hjkl = self.hjkl_penalty(pos);
+        }
     }
 
     fn metrics(&self, pos: &[usize; NSLOT], with_vim: bool) -> Metrics {
         let mut m = Metrics::default();
         for &(c, f) in &self.c.mono {
-            let s = pos[c];
-            m.effort += f * self.k[s].effort / 100.0;
-            m.fingers[self.k[s].finger as usize] += f;
-            m.rows[self.k[s].row as usize] += f;
-            if self.k[s].rank == 0 && self.k[s].row != 1 {
-                m.pinky_off += f;
-            }
+            self.add_mono(&mut m, pos[c], f, 1.0);
         }
         for &(a, b, f) in &self.c.bi {
-            let fl = self.bflag[pos[a]][pos[b]];
-            if fl == 0 {
-                continue;
-            }
-            if fl & F_SFB != 0 {
-                m.sfb += f;
-                m.sf_dist += f * self.dist[pos[a]][pos[b]];
-            }
-            if fl & F_LSB != 0 { m.lsb += f; }
-            if fl & F_FSB != 0 { m.fsb += f; }
-            if fl & F_HSB != 0 { m.hsb += f; }
-            if fl & F_PSC != 0 { m.psc += f; }
+            self.add_bi(&mut m, pos[a], pos[b], f, 1.0);
         }
         for &(a, b, f) in &self.c.skip {
-            if self.bflag[pos[a]][pos[b]] & F_SFB != 0 {
-                m.sfs += f;
-                m.sf_dist += 0.5 * f * self.dist[pos[a]][pos[b]];
-            }
+            self.add_skip(&mut m, pos[a], pos[b], f, 1.0);
         }
-        for (i, &r) in self.c.rep.iter().enumerate() {
-            if pos[i] == THUMB {
-                m.thumb_rep = r;
-            }
-        }
-        let mut acc = [0.0f64; 8];
         for &(a, b, c, f) in &self.c.tri {
-            acc[self.tcls[(pos[a] * NSLOT + pos[b]) * NSLOT + pos[c]] as usize] += f;
+            self.add_tri(&mut m, pos[a], pos[b], pos[c], f, 1.0);
         }
-        m.alt = acc[Tri::Alt as usize];
-        m.roll_in = acc[Tri::RollIn as usize];
-        m.roll_out = acc[Tri::RollOut as usize];
-        m.one_in = acc[Tri::OneIn as usize];
-        m.one_out = acc[Tri::OneOut as usize];
-        m.redirect = acc[Tri::Redirect as usize];
-        m.weak_red = acc[Tri::WeakRedirect as usize];
         if with_vim {
-            let (mut keys, mut pairs) = (0.0, 0.0);
-            for v in &self.vim {
-                for (i, &c) in v.keys.iter().enumerate() {
-                    m.vim_effort += v.w * self.k[pos[c]].effort;
-                    keys += v.w;
-                    if i > 0 {
-                        let fl = self.bflag[pos[v.keys[i - 1]]][pos[c]];
-                        pairs += v.w;
-                        if fl & F_SFB != 0 { m.vim_sfb += v.w; }
-                        if fl & (F_FSB | F_HSB | F_LSB) != 0 { m.vim_scis += v.w; }
-                    }
+            for (c, &w) in self.vim_mono.iter().enumerate() {
+                m.vim_effort += w * self.k[pos[c]].effort;
+            }
+            for &(a, b, w) in &self.vim_pairs {
+                self.add_vim_pair(&mut m, pos[a], pos[b], w, 1.0);
+            }
+        }
+        self.finish(&mut m, pos, with_vim);
+        m
+    }
+
+    // Swap items x and y in `pos`, updating `m` incrementally: every n-gram containing x or y is
+    // removed at its old slots and re-added at its new slots in one pass.
+    fn swap(&self, m: &mut Metrics, pos: &mut [usize; NSLOT], x: usize, y: usize, with_vim: bool) {
+        let (xb, yb) = (x as u8, y as u8);
+        let (sx, sy) = (pos[x], pos[y]);
+        let old = |c: u8| pos[c as usize];
+        let new = |c: u8| if c == xb { sy } else if c == yb { sx } else { pos[c as usize] };
+        for &(c, f) in self.c.mono.iter().filter(|g| g.0 == x || g.0 == y) {
+            self.add_mono(m, pos[c], f, -1.0);
+            self.add_mono(m, if c == x { sy } else { sx }, f, 1.0);
+        }
+        // n-grams containing both x and y are visited through x's list only
+        for (i, list) in [(xb, &self.idx_bi[x]), (yb, &self.idx_bi[y])] {
+            for &([a, b], f) in list.iter() {
+                if i == yb && (a == xb || b == xb) { continue; }
+                self.add_bi(m, old(a), old(b), f, -1.0);
+                self.add_bi(m, new(a), new(b), f, 1.0);
+            }
+        }
+        for (i, list) in [(xb, &self.idx_skip[x]), (yb, &self.idx_skip[y])] {
+            for &([a, b], f) in list.iter() {
+                if i == yb && (a == xb || b == xb) { continue; }
+                self.add_skip(m, old(a), old(b), f, -1.0);
+                self.add_skip(m, new(a), new(b), f, 1.0);
+            }
+        }
+        for (i, list) in [(xb, &self.idx_tri[x]), (yb, &self.idx_tri[y])] {
+            for &([a, b, c], f) in list.iter() {
+                if i == yb && (a == xb || b == xb || c == xb) { continue; }
+                self.add_tri(m, old(a), old(b), old(c), f, -1.0);
+                self.add_tri(m, new(a), new(b), new(c), f, 1.0);
+            }
+        }
+        if with_vim {
+            m.vim_effort += self.vim_mono[x] * (self.k[sy].effort - self.k[sx].effort)
+                + self.vim_mono[y] * (self.k[sx].effort - self.k[sy].effort);
+            for (i, list) in [(xb, &self.idx_vim[x]), (yb, &self.idx_vim[y])] {
+                for &([a, b], w) in list.iter() {
+                    if i == yb && (a == xb || b == xb) { continue; }
+                    self.add_vim_pair(m, old(a), old(b), w, -1.0);
+                    self.add_vim_pair(m, new(a), new(b), w, 1.0);
                 }
             }
-            m.vim_effort /= keys;
-            m.vim_sfb *= 100.0 / pairs;
-            m.vim_scis *= 100.0 / pairs;
-            m.hjkl = self.hjkl_penalty(pos);
         }
-        m
+        pos.swap(x, y);
+        self.finish(m, pos, with_vim);
     }
 
     // Pairs, Dvorak-style: j/k adjacent (j left of k on one row, or k stacked above j), and
@@ -364,6 +471,14 @@ struct Obj {
     vim_w: f64,
     base: Option<Metrics>, // hinge: never worse than this on the headline metrics
     slack: f64,
+    hinge: f64,
+}
+
+impl Obj {
+    fn new(vim_w: f64, base: Option<Metrics>, slack: f64) -> Self {
+        let hinge = std::env::var("HINGE").ok().and_then(|v| v.parse().ok()).unwrap_or(100.0);
+        Obj { vim_w, base, slack, hinge }
+    }
 }
 
 fn cost(m: &Metrics, o: &Obj) -> f64 {
@@ -379,8 +494,7 @@ fn cost(m: &Metrics, o: &Obj) -> f64 {
     }
     if let Some(b) = &o.base {
         let s = o.slack;
-        let hw: f64 = std::env::var("HINGE").ok().and_then(|v| v.parse().ok()).unwrap_or(100.0);
-        let h = |x: f64| hw * x.max(0.0);
+        let h = |x: f64| o.hinge * x.max(0.0);
         c += h(m.sfb - b.sfb - s) + h(m.sfs - b.sfs - s) + h(m.lsb - b.lsb - s)
             + h((m.fsb + m.hsb) - (b.fsb + b.hsb) - s) + h(m.fsb - b.fsb - s) + h(m.psc - b.psc - s) + h(b.alt - m.alt - 4.0 * s)
             + h(m.redirect + m.weak_red - b.redirect - b.weak_red - 4.0 * s)
@@ -477,35 +591,42 @@ fn is_letter(i: usize) -> bool {
     ITEMS.as_bytes()[i].is_ascii_lowercase()
 }
 
-fn anneal(md: &Model, o: &Obj, start: [usize; NSLOT], iters: usize, seed: u64, fixed: &[usize]) -> ([usize; NSLOT], f64) {
+fn legal(pos: &[usize; NSLOT], a: usize, b: usize) -> bool {
+    a != b && !((pos[a] == THUMB && !is_letter(b)) || (pos[b] == THUMB && !is_letter(a)))
+}
+
+// Simulated annealing over item swaps with incremental scoring, then a steepest-descent polish.
+// `local` starts from `start` at a low temperature instead of from a shuffle.
+fn anneal(md: &Model, o: &Obj, start: [usize; NSLOT], iters: usize, seed: u64, fixed: &[usize], local: bool) -> ([usize; NSLOT], f64) {
     let mut rng = Rng(seed | 1);
     let vim = o.vim_w > 0.0;
     let mut pos = start;
     let free: Vec<usize> = (0..NSLOT).filter(|i| !fixed.contains(i)).collect();
-    // shuffle free items among their slots
-    for _ in 0..200 {
-        let (a, b) = (free[rng.n(free.len())], free[rng.n(free.len())]);
-        let (sa, sb) = (pos[a], pos[b]);
-        if (sa == THUMB && !is_letter(b)) || (sb == THUMB && !is_letter(a)) {
-            continue;
+    if !local {
+        for _ in 0..200 {
+            let (a, b) = (free[rng.n(free.len())], free[rng.n(free.len())]);
+            if legal(&pos, a, b) {
+                pos.swap(a, b);
+            }
         }
-        pos.swap(a, b);
     }
-    let mut cur = cost(&md.metrics(&pos, vim), o);
+    let mut m = md.metrics(&pos, vim);
+    let mut cur = cost(&m, o);
     let (mut best, mut best_c) = (pos, cur);
-    let (t0, t1) = (8.0f64, 0.002f64);
+    let (t0, t1) = (if local { 0.6 } else { 8.0f64 }, 0.002f64);
     for it in 0..iters {
+        if it % 50_000 == 0 {
+            m = md.metrics(&pos, vim); // resync floating-point drift
+            cur = cost(&m, o);
+        }
         let t = t0 * (t1 / t0).powf(it as f64 / iters as f64);
         let (a, b) = (free[rng.n(free.len())], free[rng.n(free.len())]);
-        if a == b {
+        if !legal(&pos, a, b) {
             continue;
         }
-        let (sa, sb) = (pos[a], pos[b]);
-        if (sa == THUMB && !is_letter(b)) || (sb == THUMB && !is_letter(a)) {
-            continue;
-        }
-        pos.swap(a, b);
-        let c = cost(&md.metrics(&pos, vim), o);
+        let saved = m;
+        md.swap(&mut m, &mut pos, a, b, vim);
+        let c = cost(&m, o);
         if c <= cur || rng.f() < ((cur - c) / t).exp() {
             cur = c;
             if c < best_c {
@@ -514,26 +635,29 @@ fn anneal(md: &Model, o: &Obj, start: [usize; NSLOT], iters: usize, seed: u64, f
             }
         } else {
             pos.swap(a, b);
+            m = saved;
         }
     }
-    // steepest-descent polish over all legal swaps
     let mut pos = best;
+    let mut m = md.metrics(&pos, vim);
+    let mut best_c = cost(&m, o);
     loop {
         let mut improved = false;
         for i in 0..free.len() {
             for j in i + 1..free.len() {
                 let (a, b) = (free[i], free[j]);
-                let (sa, sb) = (pos[a], pos[b]);
-                if (sa == THUMB && !is_letter(b)) || (sb == THUMB && !is_letter(a)) {
+                if !legal(&pos, a, b) {
                     continue;
                 }
-                pos.swap(a, b);
-                let c = cost(&md.metrics(&pos, vim), o);
+                let saved = m;
+                md.swap(&mut m, &mut pos, a, b, vim);
+                let c = cost(&m, o);
                 if c < best_c - 1e-9 {
                     best_c = c;
                     improved = true;
                 } else {
                     pos.swap(a, b);
+                    m = saved;
                 }
             }
         }
@@ -541,13 +665,53 @@ fn anneal(md: &Model, o: &Obj, start: [usize; NSLOT], iters: usize, seed: u64, f
             break;
         }
     }
-    (pos, best_c)
+    let exact = cost(&md.metrics(&pos, vim), o);
+    (pos, exact)
+}
+
+fn seed_for(i: usize) -> u64 {
+    0x9E3779B97F4A7C15u64.wrapping_mul(i as u64 + 1 + std::process::id() as u64)
+}
+
+// Run `restarts` independent anneals in parallel and return them best-first.
+fn multi_anneal(md: &Model, o: &Obj, start: [usize; NSLOT], iters: usize, restarts: usize, fixed: &[usize], local: bool) -> Vec<([usize; NSLOT], f64)> {
+    let mut r: Vec<_> = (0..restarts)
+        .into_par_iter()
+        .map(|i| anneal(md, o, start, iters, seed_for(i), fixed, local))
+        .collect();
+    r.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    r
+}
+
+fn print_results(md: &Model, results: Vec<([usize; NSLOT], f64)>, detail: usize, max: usize) {
+    let mut seen = HashMap::new();
+    for (pos, c) in results {
+        let key = compact(&pos);
+        if seen.insert(key.clone(), ()).is_some() {
+            continue;
+        }
+        println!("cost {:.3}   {}", c, key);
+        if seen.len() <= detail {
+            print!("{}", show(&pos));
+            report(&md.metrics(&pos, true));
+        }
+        if seen.len() >= max {
+            break;
+        }
+    }
+}
+
+// Put item x at slot s by swapping with whatever is there.
+fn place(pos: &mut [usize; NSLOT], x: usize, s: usize) {
+    let y = (0..NSLOT).find(|&i| pos[i] == s).unwrap();
+    pos.swap(x, y);
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let dir = std::env::var("CORPUS").unwrap_or(".".into());
-    let md = Arc::new(Model::new(load(&dir, 4000)));
+    let md = Model::new(load(&dir, 4000));
+    let local = std::env::var("LOCAL").is_ok();
     match args.get(1).map(|s| s.as_str()) {
         Some("analyze") => {
             for l in &args[2..] {
@@ -557,8 +721,8 @@ fn main() {
                 report(&m);
                 println!(
                     "  cost(eng) {:.3}  cost(vim .5) {:.3}\n",
-                    cost(&m, &Obj { vim_w: 0.0, base: None, slack: 0.0 }),
-                    cost(&m, &Obj { vim_w: 0.5, base: None, slack: 0.0 })
+                    cost(&m, &Obj::new(0.0, None, 0.0)),
+                    cost(&m, &Obj::new(0.5, None, 0.0))
                 );
             }
         }
@@ -572,6 +736,24 @@ fn main() {
                 println!("{name}: {}", s.join(", "));
             }
         }
+        Some("check") => {
+            // incremental vs full scoring on random swaps
+            let pos0 = parse(&args[2]);
+            let mut pos = pos0;
+            let mut m = md.metrics(&pos, true);
+            let mut rng = Rng(12345);
+            let o = Obj::new(1.5, Some(md.metrics(&pos0, true)), 0.05);
+            let mut worst = 0.0f64;
+            for _ in 0..100_000 {
+                let (a, b) = (rng.n(NSLOT), rng.n(NSLOT));
+                if !legal(&pos, a, b) {
+                    continue;
+                }
+                md.swap(&mut m, &mut pos, a, b, true);
+                worst = worst.max((cost(&m, &o) - cost(&md.metrics(&pos, true), &o)).abs());
+            }
+            println!("max |incremental - full| cost over 100k swaps: {worst:.2e}");
+        }
         Some("opt") => {
             // opt <vim_w> <iters> <restarts> <base-layout|-> <slack> [fixed chars]
             let vim_w: f64 = args[2].parse().unwrap();
@@ -581,38 +763,50 @@ fn main() {
             let slack: f64 = args[6].parse().unwrap();
             let start = if args[5] == "-" { parse("vwgmj;.'/=snthk,aeicpfdlx-uoyb r") } else { parse(&args[5]) };
             let fixed: Vec<usize> = args.get(7).map(|s| s.chars().map(|c| item_id(c).unwrap()).collect()).unwrap_or_default();
-            let o = Obj { vim_w, base, slack };
-            let threads = 4;
-            let mut results = vec![];
-            for round in 0..restarts.div_ceil(threads) {
-                let hs: Vec<_> = (0..threads)
-                    .map(|t| {
-                        let (md, o, fixed) = (md.clone(), o.clone(), fixed.clone());
-                        let seed = 0x9E3779B97F4A7C15u64.wrapping_mul((round * threads + t + 1) as u64 + std::process::id() as u64);
-                        thread::spawn(move || anneal(&md, &o, start, iters, seed, &fixed))
-                    })
-                    .collect();
-                for h in hs {
-                    results.push(h.join().unwrap());
-                }
-            }
-            results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-            let mut seen = HashMap::new();
-            for (pos, c) in results {
-                let key = compact(&pos);
-                if seen.insert(key.clone(), ()).is_some() {
-                    continue;
-                }
-                println!("cost {:.3}   {}", c, key);
-                if seen.len() <= 3 {
-                    print!("{}", show(&pos));
-                    report(&md.metrics(&pos, true));
-                }
-                if seen.len() >= 6 {
-                    break;
-                }
-            }
+            let o = Obj::new(vim_w, base, slack);
+            print_results(&md, multi_anneal(&md, &o, start, iters, restarts, &fixed, local), 3, 6);
         }
-        _ => eprintln!("usage: kb analyze <layout>... | kb opt <vim_w> <iters> <restarts> <base|-> <slack> [fixed]"),
+        Some("sweep") => {
+            // sweep <vim_w> <iters> <restarts> <base-layout> <slack> [seed-layout]
+            // Pin every j/k + h/l pair placement, optimize the rest around it (in parallel across placements).
+            let vim_w: f64 = args[2].parse().unwrap();
+            let iters: usize = args[3].parse().unwrap();
+            let restarts: usize = args[4].parse().unwrap();
+            let base_pos = parse(&args[5]);
+            let slack: f64 = args[6].parse().unwrap();
+            let seed = args.get(7).map(|s| parse(s)).unwrap_or(base_pos);
+            let o = Obj::new(vim_w, Some(md.metrics(&base_pos, true)), slack);
+            let cols = [1usize, 2, 3, 5, 6, 7]; // pair start columns that keep both keys off the pinkies
+            let mut jk: Vec<(usize, usize)> = (0..3).flat_map(|r| cols.map(|c| (r * 10 + c, r * 10 + c + 1))).collect();
+            jk.extend((1..3).flat_map(|r| (1..9).map(move |c| (r * 10 + c, (r - 1) * 10 + c))));
+            let hl: Vec<(usize, usize)> = (0..3).flat_map(|r| cols.map(|c| (r * 10 + c, r * 10 + c + 1))).collect();
+            let (h, j, k, l) = (item_id('h').unwrap(), item_id('j').unwrap(), item_id('k').unwrap(), item_id('l').unwrap());
+            let fixed = [h, j, k, l];
+            let mut starts = vec![];
+            for &(sj, sk) in &jk {
+                for &(sh, sl) in &hl {
+                    if [sj, sk, sh, sl].iter().collect::<std::collections::HashSet<_>>().len() < 4 {
+                        continue;
+                    }
+                    let mut p = seed;
+                    for (x, s) in [(h, sh), (j, sj), (k, sk), (l, sl)] {
+                        place(&mut p, x, s);
+                    }
+                    if !(0..NSLOT).all(|i| p[i] != THUMB || is_letter(i)) {
+                        continue;
+                    }
+                    starts.push(p);
+                }
+            }
+            eprintln!("{} placements x {} restarts x {} iters", starts.len(), restarts, iters);
+            let mut results: Vec<_> = starts
+                .par_iter()
+                .flat_map_iter(|&p| (0..restarts).map(move |i| (p, i)))
+                .map(|(p, i)| anneal(&md, &o, p, iters, seed_for(i * 7919 + p[h] * 31 + p[j]), &fixed, local))
+                .collect();
+            results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            print_results(&md, results, 5, 25);
+        }
+        _ => eprintln!("usage: kb analyze <layout>... | top <layout> | check <layout> | opt <vim_w> <iters> <restarts> <base|-> <slack> [fixed] | sweep <vim_w> <iters> <restarts> <base> <slack> [seed]"),
     }
 }
