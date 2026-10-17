@@ -27,11 +27,12 @@ struct Key {
 
 fn keys() -> [Key; NKEY] {
     // Effort for a column-staggered Corne, left hand pinky..inner; mirrored for right.
-    let eff = [
-        [3.0, 2.4, 2.0, 2.2, 3.0],
-        [1.6, 1.3, 1.1, 1.0, 2.4],
-        [3.2, 2.6, 2.3, 1.6, 3.0],
-    ];
+    // EFFORT=flat|steep swaps in an alternative grid (robustness checks)
+    let eff = match std::env::var("EFFORT").as_deref() {
+        Ok("flat") => [[1.8, 1.6, 1.5, 1.5, 2.0], [1.2, 1.1, 1.0, 1.0, 1.6], [1.8, 1.6, 1.5, 1.4, 2.0]],
+        Ok("steep") => [[4.5, 3.2, 2.0, 2.2, 3.2], [2.4, 1.6, 1.1, 1.0, 2.4], [4.8, 3.4, 2.3, 1.6, 3.2]],
+        _ => [[3.0, 2.4, 2.0, 2.2, 3.0], [1.6, 1.3, 1.1, 1.0, 2.4], [3.2, 2.6, 2.3, 1.6, 3.0]],
+    };
     let mut k = [Key { hand: 0, finger: 0, rank: 0, row: 0, col: 0, effort: 0.0 }; NKEY];
     for r in 0..3 {
         for c in 0..10 {
@@ -149,6 +150,7 @@ fn tri_class(k: &[Key; NKEY], a: usize, b: usize, c: usize) -> Tri {
 struct Corpus {
     rep_space: f64, // repeat press directly followed by space (% of bigrams); 0 without a repeat key
     rep_space_exact: bool, // true when rep_space already counts only presses of the space-thumb repeat key
+    ad_conflict: f64, // bigrams that collide with an adaptive rule (% of bigrams)
     rep: Vec<f64>, // same-letter double frequency (% of bigrams) per item
     mono: Vec<(usize, f64)>,
     bi: Vec<(usize, usize, f64)>,
@@ -160,6 +162,7 @@ fn item_id(c: char) -> Option<usize> {
     ITEMS.chars().position(|x| x == c)
 }
 
+#[allow(dead_code)] // superseded by corpus_from_words; kept for the tsv tables
 fn load(dir: &str, tri_cap: usize) -> Corpus {
     let read = |name: &str| -> Vec<(Vec<usize>, f64)> {
         let s = fs::read_to_string(format!("{dir}/{name}")).expect(name);
@@ -192,7 +195,7 @@ fn load(dir: &str, tri_cap: usize) -> Corpus {
         .ok()
         .and_then(|s| s.lines().find_map(|l| l.strip_prefix("rep_space\t").map(|v| v.parse::<f64>().unwrap() * 100.0)))
         .unwrap_or(0.0);
-    Corpus { rep_space, rep_space_exact: false, rep, mono, bi, skip, tri }
+    Corpus { rep_space, rep_space_exact: false, ad_conflict: 0.0, rep, mono, bi, skip, tri }
 }
 
 // Vim normal-mode keystroke model: (sequence, relative weight). Uppercase uses the same key
@@ -258,6 +261,9 @@ struct Metrics {
     pinky_off: f64,
     thumb_rep: f64, // double taps of the thumb letter (% of bigrams)
     rep_space_sfb: f64, // repeat key then space on the same (right) thumb, counted into SFB
+    ad_conflict: f64, // adaptive-rule collisions (typist pauses), % of bigrams
+    weak_dbl: f64, // same-key doubles weighted by finger: pinky/thumb 1, ring 0.5 (% of bigrams)
+    fixable: f64, // ADAPT_K=k: weighted cost of the k worst bigrams (what k adaptives could remove)
     sf_dist: f64, // same-finger travel (key units) per 100 bigrams, SFB + 0.5*SFS
     vim_effort: f64,
     vim_sfb: f64,
@@ -287,6 +293,7 @@ struct Model {
     vowel_hand: Option<u8>,
     prefs: bool,
     near: Option<[usize; NITEM]>,
+    adapt_k: usize,
 }
 
 fn index_by_item<const N: usize>(grams: impl Iterator<Item = ([usize; N], f64)>) -> Vec<Vec<([u8; N], f64)>> {
@@ -339,6 +346,7 @@ impl Model {
             k, bflag, dist, tcls, c, vim_mono, vim_pairs,
             prefs: std::env::var("PREFS").is_ok(),
             near: std::env::var("NEAR").ok().map(|l| parse(&l)),
+            adapt_k: std::env::var("ADAPT_K").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
             vowel_hand: match std::env::var("VOWELS").as_deref() {
                 Ok("left") => Some(0),
                 Ok("right") => Some(1),
@@ -405,8 +413,34 @@ impl Model {
         m.redirect = m.tri[Tri::Redirect as usize];
         m.weak_red = m.tri[Tri::WeakRedirect as usize];
         m.thumb_rep = (0..NITEM).find(|&i| pos[i] == THUMB).map_or(0.0, |i| self.c.rep[i]);
+        m.weak_dbl = (0..NITEM)
+            .map(|i| self.c.rep[i] * match self.k[pos[i]].rank { 0 | 4 => 1.0, 1 => 0.5, _ => 0.0 })
+            .sum();
         if with_vim {
             m.hjkl = self.hjkl_penalty(pos);
+        }
+        if self.adapt_k > 0 {
+            let mut worst = [0.0f64; 16];
+            let k = self.adapt_k.min(16);
+            for &(a, b, f) in &self.c.bi {
+                let fl = self.bflag[pos[a]][pos[b]];
+                if fl == 0 {
+                    continue;
+                }
+                let w = if fl & F_SFB != 0 { 12.0 } else { 0.0 } + if fl & F_FSB != 0 { 6.0 } else { 0.0 }
+                    + if fl & F_HSB != 0 { 3.0 } else { 0.0 } + if fl & F_LSB != 0 { 5.0 } else { 0.0 }
+                    + if fl & F_PSC != 0 { 6.0 } else { 0.0 } + if fl & F_RP != 0 { 3.0 } else { 0.0 };
+                let v = f * w;
+                if v > worst[k - 1] {
+                    let mut i = k - 1;
+                    while i > 0 && worst[i - 1] < v {
+                        worst[i] = worst[i - 1];
+                        i -= 1;
+                    }
+                    worst[i] = v;
+                }
+            }
+            m.fixable = worst[..k].iter().sum();
         }
         if let Some(r) = &self.near {
             m.moved = (0..NSLOT).filter(|&i| pos[i] != r[i]).count() as f64;
@@ -449,6 +483,7 @@ impl Model {
                 self.add_vim_pair(&mut m, pos[a], pos[b], w, 1.0);
             }
         }
+        m.ad_conflict = self.c.ad_conflict;
         if self.c.rep_space_exact || self.k[pos[REP]].finger == self.k[RTHUMB].finger {
             m.rep_space_sfb = self.c.rep_space;
             m.sfb += m.rep_space_sfb;
@@ -559,8 +594,11 @@ fn cost(m: &Metrics, o: &Obj) -> f64 {
         - 0.4 * m.alt - 0.4 * m.roll_in - 0.2 * m.roll_out
         + 4.0 * m.effort
         + if o.repeat_key { 0.0 } else { 6.0 * m.thumb_rep }
+        + 4.0 * m.weak_dbl
         + 100.0 * m.vowel_viol
         + 100.0 * m.pref_viol
+        + 12.0 * m.ad_conflict
+        - 0.9 * m.fixable
         + o.near_w * m.moved
         + 1.5 * pinky + 2.0 * m.pinky_off;
     for f in m.fingers.iter().take(8) {
@@ -661,8 +699,8 @@ fn report(m: &Metrics) {
         f[0] + f[1] + f[2] + f[3] + f[8], f[4] + f[5] + f[6] + f[7]
     );
     println!(
-        "  Rows top {:.1}% home {:.1}% bottom {:.1}% thumb {:.1}%  PinkyOffHome {:.2}%  SameFingerDist {:.3}  In/Out {:.2}  ThumbDoubles {:.2}%  Rep->Space SFB {:.2}%",
-        m.rows[0], m.rows[1], m.rows[2], m.rows[3], m.pinky_off, m.sf_dist, m.roll_in / m.roll_out, m.thumb_rep, m.rep_space_sfb
+        "  Rows top {:.1}% home {:.1}% bottom {:.1}% thumb {:.1}%  PinkyOffHome {:.2}%  SameFingerDist {:.3}  In/Out {:.2}  ThumbDoubles {:.2}%  Rep->Space SFB {:.2}%  AdaptiveClash {:.2}%  WeakDoubles {:.2}%",
+        m.rows[0], m.rows[1], m.rows[2], m.rows[3], m.pinky_off, m.sf_dist, m.roll_in / m.roll_out, m.thumb_rep, m.rep_space_sfb, m.ad_conflict, m.weak_dbl
     );
     println!(
         "  Vim: effort/key {:.3}  SFB {:.2}%  scissor+LSB {:.2}%  ring-pinky {:.2}%  hjkl-geometry {:.2}",
@@ -828,23 +866,50 @@ enum RepMode {
 
 // Builds n-gram tables from words.tsv for one specific layout, the same way gen_corpus.py does,
 // but replacing the second letter of each double with the repeat key chosen under `mode`.
+// An adaptive key: after `prev`, pressing the key of `via` types `out` (ZMK antecedent-morph).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Adaptive {
+    prev: usize,
+    out: usize,
+    via: usize,
+}
+
+fn words(dir: &str) -> &'static [(Vec<char>, f64)] {
+    static WORDS: std::sync::OnceLock<Vec<(Vec<char>, f64)>> = std::sync::OnceLock::new();
+    WORDS.get_or_init(|| {
+        fs::read_to_string(format!("{dir}/words.tsv"))
+            .expect("words.tsv")
+            .lines()
+            .map(|l| {
+                let (w, f) = l.split_once('\t').unwrap();
+                (w.chars().collect(), f.parse().unwrap())
+            })
+            .collect()
+    })
+}
+
 fn corpus_from_words(dir: &str, pos: &[usize; NITEM], k: &[Key; NKEY], mode: RepMode, tri_cap: usize) -> Corpus {
+    corpus_with_adaptives(dir, pos, k, mode, tri_cap, &[])
+}
+
+// Like corpus_from_words, with adaptive keys applied. Typing `prev` then the letter of `via` itself
+// collides with a rule; those bigrams are reported as `ad_conflict` (the typist has to pause).
+fn corpus_with_adaptives(dir: &str, pos: &[usize; NITEM], k: &[Key; NKEY], mode: RepMode, tri_cap: usize, rules: &[Adaptive]) -> Corpus {
     const P_COMMA: f64 = 0.055;
     const P_PERIOD: f64 = 0.050;
     const P_SEMI: f64 = 0.002;
     const JOINS: [(char, f64); 2] = [('-', 0.004), ('/', 0.0008)];
-    let text = fs::read_to_string(format!("{dir}/words.tsv")).expect("words.tsv");
     let sfb = |a: usize, b: usize| (a != b && bigram_flags(k, a, b) & F_SFB != 0) as u8;
     let mut mono = vec![0.0; NITEM];
     let mut bi: HashMap<[usize; 2], f64> = HashMap::new();
     let mut skip: HashMap<[usize; 2], f64> = HashMap::new();
     let mut tri: HashMap<[usize; 3], f64> = HashMap::new();
     let (mut first, mut last) = (vec![0.0; NITEM], vec![0.0; NITEM]);
-    let (mut words_tot, mut rep_space) = (0.0, 0.0);
-    for line in text.lines() {
-        let (w, f) = line.split_once('\t').unwrap();
-        let f: f64 = f.parse().unwrap();
-        let ch: Vec<char> = w.chars().collect();
+    let (mut words_tot, mut rep_space, mut conflict) = (0.0, 0.0, 0.0);
+    // key that ends a word (last letter or trailing punctuation) / starts one, for pairs across a space
+    let (mut end_key, mut start_key) = (vec![0.0; NITEM], vec![0.0; NITEM]);
+    for (ch, f) in words(dir) {
+        let f = *f;
         words_tot += f;
         if let Some(x) = item_id(ch[0]) { first[x] += f; }
         if let Some(x) = item_id(*ch.last().unwrap()) { last[x] += f; }
@@ -892,9 +957,25 @@ fn corpus_from_words(dir: &str, pos: &[usize; NITEM], k: &[Key; NKEY], mode: Rep
             if let Some(t) = tail {
                 seq.push(item_id(t));
             }
+            if !rules.is_empty() {
+                // the text as typed (before substitutions) decides which rule fires
+                let text: Vec<Option<usize>> = ch.iter().map(|&c| item_id(c)).chain(tail.map(|t| item_id(t))).collect();
+                for i in 1..seq.len() {
+                    let (Some(p), Some(c)) = (text[i - 1], text[i]) else { continue };
+                    for r in rules {
+                        if r.prev == p && r.out == c && seq[i] == Some(c) {
+                            seq[i] = Some(r.via);
+                        } else if r.prev == p && r.via == c && r.out != c {
+                            conflict += g;
+                        }
+                    }
+                }
+            }
             for x in seq.iter().flatten() {
                 mono[*x] += g;
             }
+            if let Some(Some(e)) = seq.last() { end_key[*e] += g; }
+            if let Some(Some(b)) = seq.first() { start_key[*b] += g; }
             for w2 in seq.windows(2) {
                 if let [Some(a), Some(b)] = w2 { *bi.entry([*a, *b]).or_default() += g; }
             }
@@ -920,6 +1001,16 @@ fn corpus_from_words(dir: &str, pos: &[usize; NITEM], k: &[Key; NKEY], mode: Rep
             }
         }
     }
+    // a b across a space is a skipgram (the space press sits between them); words assumed independent
+    if std::env::var("NOSPACE").is_err() {
+        for a in 0..NITEM {
+            for b in 0..NITEM {
+                if end_key[a] > 0.0 && start_key[b] > 0.0 {
+                    *skip.entry([a, b]).or_default() += end_key[a] * start_key[b] / words_tot;
+                }
+            }
+        }
+    }
     let pct = |v: f64, t: f64| v / t * 100.0;
     let mono_t: f64 = mono.iter().sum();
     let bi_t: f64 = bi.values().sum();
@@ -935,6 +1026,7 @@ fn corpus_from_words(dir: &str, pos: &[usize; NITEM], k: &[Key; NKEY], mode: Rep
     Corpus {
         rep_space: pct(rep_space, bi_t),
         rep_space_exact: true,
+        ad_conflict: pct(conflict, bi_t),
         rep,
         mono: mono.iter().enumerate().filter(|(_, f)| **f > 0.0).map(|(i, f)| (i, pct(*f, mono_t))).collect(),
         bi: bi.iter().filter(|(g, _)| g[0] != g[1]).map(|(g, f)| (g[0], g[1], pct(*f, bi_t))).collect(),
@@ -971,7 +1063,7 @@ fn regressions(m: &Metrics, b: &Metrics, tol: f64) -> Vec<String> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let dir = std::env::var("CORPUS").unwrap_or(".".into());
-    let md = Model::new(load(&dir, 4000));
+    let md = Model::new(corpus_from_words(&dir, &parse("vwgmj;.'/=snthk,aeicfpdlx-uoyb r"), &keys(), RepMode::None, 4000));
     let local = std::env::var("LOCAL").is_ok();
     match args.get(1).map(|s| s.as_str()) {
         Some("analyze") => {
@@ -1017,6 +1109,59 @@ fn main() {
                 let r = regressions(&m, &base, 0.02);
                 println!("  vs PM ({} worse beyond 0.02): {}\n", r.len(), if r.is_empty() { "none - dominates PM".into() } else { r.join(", ") });
             }
+        }
+        Some("adapt") => {
+            // adapt <layout> <max rules>: greedy adaptive-key search, scored exactly (weighted cost, no PM rule)
+            let pos = parse(&args[2]);
+            let max: usize = args[3].parse().unwrap();
+            let k = keys();
+            let o = Obj::new(0.0, None, 0.0);
+            let ch: Vec<char> = ITEMS.chars().collect();
+            let score = |rules: &[Adaptive]| {
+                let em = Model::new(corpus_with_adaptives(&dir, &pos, &k, RepMode::None, 4000, rules));
+                let m = em.metrics(&pos, false);
+                (cost(&m, &o), m)
+            };
+            let mut rules: Vec<Adaptive> = vec![];
+            let (mut cur, m0) = score(&rules);
+            print!("{}", show(&pos));
+            println!("no adaptives: cost {cur:.3}");
+            report(&m0);
+            for step in 0..max {
+                // the worst bigrams under the current rules
+                let em = Model::new(corpus_with_adaptives(&dir, &pos, &k, RepMode::None, 4000, &rules));
+                let mut bad: Vec<(f64, usize, usize)> = em.c.bi.iter().filter_map(|&(a, b, f)| {
+                    let fl = em.bflag[pos[a]][pos[b]];
+                    let w = [(F_SFB, 12.0), (F_FSB, 6.0), (F_HSB, 3.0), (F_LSB, 5.0), (F_PSC, 6.0), (F_RP, 3.0)]
+                        .iter().filter(|(x, _)| fl & x != 0).map(|(_, w)| w).sum::<f64>();
+                    (w > 0.0 && a < NSLOT && b < NSLOT).then_some((f * w, a, b))
+                }).collect();
+                bad.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap());
+                bad.truncate(20);
+                let cands: Vec<Adaptive> = bad.iter().flat_map(|&(_, a, b)| {
+                    let k = &k;
+                    let pos = &pos;
+                    (0..NSLOT).filter(move |&z| z != a && z != b && k[pos[z]].finger != k[pos[a]].finger)
+                        .map(move |z| Adaptive { prev: a, out: b, via: z })
+                }).filter(|r| !rules.iter().any(|x| x.prev == r.prev && (x.out == r.out || x.via == r.via))).collect();
+                let best = cands.par_iter().map(|r| {
+                    let mut rs = rules.clone();
+                    rs.push(*r);
+                    (score(&rs).0, *r)
+                }).min_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+                match best {
+                    Some((c, r)) if c < cur - 0.05 => {
+                        println!("rule {}: after {} press {} -> types {}   cost {:.3} -> {:.3}",
+                            step + 1, ch[r.prev], ch[r.via], ch[r.out], cur, c);
+                        cur = c;
+                        rules.push(r);
+                    }
+                    _ => { println!("no further improving rule"); break; }
+                }
+            }
+            let (c, m) = score(&rules);
+            println!("with {} adaptives: cost {c:.3}", rules.len());
+            report(&m);
         }
         Some("check") => {
             // incremental vs full scoring on random swaps
