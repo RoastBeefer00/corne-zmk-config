@@ -162,7 +162,6 @@ fn item_id(c: char) -> Option<usize> {
     ITEMS.chars().position(|x| x == c)
 }
 
-#[allow(dead_code)] // superseded by corpus_from_words; kept for the tsv tables
 fn load(dir: &str, tri_cap: usize) -> Corpus {
     let read = |name: &str| -> Vec<(Vec<usize>, f64)> {
         let s = fs::read_to_string(format!("{dir}/{name}")).expect(name);
@@ -1162,6 +1161,35 @@ fn main() {
             let (c, m) = score(&rules);
             println!("with {} adaptives: cost {c:.3}", rules.len());
             report(&m);
+        }
+        Some("tryrule") => {
+            // tryrule <layout> <prev><out> [existing rules as prev+out+via ...]: score every via key for one rule
+            let pos = parse(&args[2]);
+            let pair: Vec<usize> = args[3].chars().map(|c| item_id(c).unwrap()).collect();
+            let base_rules: Vec<Adaptive> = args[4..].iter().map(|r| {
+                let v: Vec<usize> = r.chars().map(|c| item_id(c).unwrap()).collect();
+                Adaptive { prev: v[0], out: v[1], via: v[2] }
+            }).collect();
+            let k = keys();
+            let o = Obj::new(0.0, None, 0.0);
+            let ch: Vec<char> = ITEMS.chars().collect();
+            let score = |rules: &[Adaptive]| {
+                let m = Model::new(corpus_with_adaptives(&dir, &pos, &k, RepMode::None, 4000, rules)).metrics(&pos, false);
+                (cost(&m, &o), m)
+            };
+            let (c0, _) = score(&base_rules);
+            let mut res: Vec<_> = (0..NSLOT).filter(|&z| z != pair[0] && z != pair[1]).collect::<Vec<_>>().par_iter().map(|&z| {
+                let mut rs = base_rules.clone();
+                rs.push(Adaptive { prev: pair[0], out: pair[1], via: z });
+                let (c, m) = score(&rs);
+                (c, z, m)
+            }).collect();
+            res.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            println!("without the rule: cost {c0:.3}");
+            for (c, z, m) in res.iter().take(8) {
+                println!("  press {} -> {}{}   cost {:+.3}   clash {:.3}%  SFB {:.2}%  LSB {:.2}%  HSB {:.2}%",
+                    ch[*z], ch[pair[0]], ch[pair[1]], c - c0, m.ad_conflict, m.sfb, m.lsb, m.hsb);
+            }
         }
         Some("check") => {
             // incremental vs full scoring on random swaps
