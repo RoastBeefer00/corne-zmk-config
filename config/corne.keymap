@@ -303,7 +303,7 @@
             defaults = <&kp MINUS>;
             bindings = <&kp E>;       // E then - types "ee" (no double-tap on the thumb)
             antecedents = <E>;
-            max-delay-ms = <125>;
+            max-delay-ms = <150>;     // a little longer: thumb-to-index rolls start from a layer-tap
         };
 
         // home-row mod whose tap is the adaptive H (used as &hm_opt_h LCTRL 0)
