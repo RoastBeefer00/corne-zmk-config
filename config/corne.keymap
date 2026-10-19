@@ -136,18 +136,25 @@
             key-positions = <2 4>;
             bindings = <&m_qu>;
         };
-        // OPT layer: on its keys the BASE positions would be o+u, so use rare pairs instead
+        // OPT layer: same finger pattern as BASE, mirrored onto the right bottom row
+        // (C index, M middle, W ring); these letter pairs are under 0.01% of English bigrams
         combo_z_opt {
             timeout-ms = <45>;
             layers = <OPT>;
-            key-positions = <1 2>;   // J + P
+            key-positions = <32 33>; // M + W
             bindings = <&kp Z>;
         };
         combo_q_opt {
             timeout-ms = <45>;
             layers = <OPT>;
-            key-positions = <25 26>; // / + K
+            key-positions = <31 32>; // C + M
             bindings = <&kp Q>;
+        };
+        combo_qu_opt {
+            timeout-ms = <45>;
+            layers = <OPT>;
+            key-positions = <31 33>; // C + W
+            bindings = <&m_qu>;
         };
     };
 
@@ -332,7 +339,7 @@
 
         // Layer 1: OPT (alternate base, &to OPT from the system layer)
         // Analyzer optimum (tools/layout-analyzer): E on the thumb, vowels on the left hand.
-        // Q = / + K and Z = J + P on this layer (the BASE combo positions would be o+u).
+        // Combos on this layer: Z = M+W, Q = C+M, QU = C+W (right bottom row).
         // Adaptives: S,D -> sc   W,K -> wn   B,H -> bl   U,H -> ui   E,- -> ee
         // ╭───────────────────────────────────────╮ ╭───────────────────────────────────────╮
         // │       │  J  │  P  │  O  │  U  │  -  │ │  F  │  G  │  D  │  L  │  =  │       │
