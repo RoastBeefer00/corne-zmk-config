@@ -292,8 +292,8 @@
             compatible = "zmk,behavior-antecedent-morph";
             #binding-cells = <0>;
             defaults = <&kp H>;
-            bindings = <&kp L>, <&kp I>;   // B then H types "bl", U then H types "ui"
-            antecedents = <B U>;
+            bindings = <&kp L>, <&kp I>, <&kp M>;   // B,H -> "bl"   U,H -> "ui"   L,H -> "lm"
+            antecedents = <B U L>;
             max-delay-ms = <125>;
         };
 
@@ -340,7 +340,7 @@
         // Layer 1: OPT (alternate base, &to OPT from the system layer)
         // Analyzer optimum (tools/layout-analyzer): E on the thumb, vowels on the left hand.
         // Combos on this layer: Z = M+W, Q = C+M, QU = C+W (right bottom row).
-        // Adaptives: S,D -> sc   W,K -> wn   B,H -> bl   U,H -> ui   E,- -> ee
+        // Adaptives: S,D -> sc   W,K -> wn   B,H -> bl   U,H -> ui   L,H -> lm   E,- -> ee
         // ╭───────────────────────────────────────╮ ╭───────────────────────────────────────╮
         // │       │  J  │  P  │  O  │  U  │  -  │ │  F  │  G  │  D  │  L  │  =  │       │
         // │       │ Y/G │ H/C │ A/S │ I/A │  .  │ │  B  │ S/A │ T/S │ N/C │ R/G │       │
