@@ -306,6 +306,15 @@
             max-delay-ms = <200>;     // a little longer: thumb-to-index rolls start from a layer-tap
         };
 
+        ad_opt_equal: adaptive_opt_equal {
+            compatible = "zmk,behavior-antecedent-morph";
+            #binding-cells = <0>;
+            defaults = <&kp EQUAL>;
+            bindings = <&kp K>;       // O then = types "ok" (no ring/middle scissor)
+            antecedents = <O>;
+            max-delay-ms = <200>;
+        };
+
         // home-row mod whose tap is the adaptive H (used as &hm_opt_h LCTRL 0)
         hm_opt_h: homerow_mod_opt_h {
             compatible = "zmk,behavior-hold-tap";
@@ -340,7 +349,7 @@
         // Layer 1: OPT (alternate base, &to OPT from the system layer)
         // Analyzer optimum (tools/layout-analyzer): E on the thumb, vowels on the left hand.
         // Combos on this layer: Z = M+W, Q = C+M, QU = C+W (right bottom row).
-        // Adaptives: S,D -> sc   W,K -> wn   B,H -> bl   U,H -> ui   L,H -> lm   E,- -> ee
+        // Adaptives: S,D -> sc   W,K -> wn   B,H -> bl   U,H -> ui   L,H -> lm   E,- -> ee   O,= -> ok
         // ╭───────────────────────────────────────╮ ╭───────────────────────────────────────╮
         // │       │  J  │  P  │  O  │  U  │  -  │ │  F  │  G  │  D  │  L  │  =  │       │
         // │       │ Y/G │ H/C │ A/S │ I/A │  .  │ │  B  │ S/A │ T/S │ N/C │ R/G │       │
@@ -348,7 +357,7 @@
         // ╰───────────────────╮   BSPC   │ E/NAV │ SHFT │ │ SHFT │ SPC/SYM │ ENT ╭───────────────────╯
         opt_layer {
             bindings = <
-   &trans  &kp J          &kp P          &kp O           &kp U          &ad_opt_minus &kp F       &kp G          &ad_opt_d       &kp L          &kp EQUAL     &trans
+   &trans  &kp J          &kp P          &kp O           &kp U          &ad_opt_minus &kp F       &kp G          &ad_opt_d       &kp L          &ad_opt_equal &trans
    &trans  &hm LGUI Y     &hm_opt_h LCTRL 0 &hm LSHIFT A    &hm LALT I     &kp PERIOD    &kp B       &hm LALT S     &hm LSHIFT T    &hm LCTRL N    &hm LGUI R    &trans
    &trans  &kp FSLH       &ad_opt_k      &kp APOS        &kp COMMA      &kp SEMI      &kp V       &kp C          &kp M           &kp W          &kp X         &trans
                                          &trans          &lt NAV E      &trans        &trans      &trans         &trans
