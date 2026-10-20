@@ -176,7 +176,7 @@
             defaults = <&kp M>;
             bindings = <&kp L>, <&kp L>;
             antecedents = <G P>;
-            max-delay-ms = <125>;
+            max-delay-ms = <200>;
         };
 
         ad_g: adaptive_g {
@@ -186,7 +186,7 @@
             defaults = <&kp G>;
             bindings = <&m_lg>, <&m_pg>;
             antecedents = <M W>;
-            max-delay-ms = <125>;
+            max-delay-ms = <200>;
         };
 
         ad_ha: adaptive_ha {
@@ -196,7 +196,7 @@
             defaults = <&kp H>;
             bindings = <&kp U>, <&kp U>;
             antecedents = <A>;
-            max-delay-ms = <125>;
+            max-delay-ms = <200>;
         };
 
         ad_a: adaptive_a {
@@ -206,7 +206,7 @@
             defaults = <&kp A>;
             bindings = <&kp U>, <&kp U>;
             antecedents = <H>;
-            max-delay-ms = <125>;
+            max-delay-ms = <200>;
         };
 
         ad_f: adaptive_f {
@@ -216,7 +216,7 @@
             defaults = <&kp F>;
             bindings = <&kp G>, <&kp S>;
             antecedents = <D B>;
-            max-delay-ms = <125>;
+            max-delay-ms = <200>;
         };
 
         ad_p: adaptive_p {
@@ -226,7 +226,7 @@
             defaults = <&kp P>;
             bindings = <&m_sp>;
             antecedents = <F>;
-            max-delay-ms = <125>;
+            max-delay-ms = <200>;
         };
 
         ad_y: adaptive_y {
@@ -236,7 +236,7 @@
             defaults = <&kp Y>;
             bindings = <&kp I>;
             antecedents = <W>;
-            max-delay-ms = <125>;
+            max-delay-ms = <200>;
         };
 
         ad_w: adaptive_w {
@@ -246,7 +246,7 @@
             defaults = <&kp W>;
             bindings = <&m_iw>;
             antecedents = <Y>;
-            max-delay-ms = <125>;
+            max-delay-ms = <200>;
         };
 
         ad_d: adaptive_d {
@@ -256,7 +256,7 @@
             defaults = <&kp D>;
             bindings = <&m_wd>;
             antecedents = <F>;
-            max-delay-ms = <125>;
+            max-delay-ms = <200>;
         };
 
         ad_fslh: adaptive_fslh {
@@ -266,7 +266,7 @@
             defaults = <&kp FSLH>;
             bindings = <&kp U>;
             antecedents = <A>;
-            max-delay-ms = <125>;
+            max-delay-ms = <200>;
         };
 
         // OPT layer adaptives: the four that remove the most same-finger load (sc, wn, bl, ui)
@@ -276,7 +276,7 @@
             defaults = <&kp D>;
             bindings = <&kp C>;       // S then D types "sc"
             antecedents = <S>;
-            max-delay-ms = <125>;
+            max-delay-ms = <200>;
         };
 
         ad_opt_k: adaptive_opt_k {
@@ -285,7 +285,7 @@
             defaults = <&kp K>;
             bindings = <&kp N>;       // W then K types "wn"
             antecedents = <W>;
-            max-delay-ms = <125>;
+            max-delay-ms = <200>;
         };
 
         ad_opt_h: adaptive_opt_h {
@@ -294,7 +294,7 @@
             defaults = <&kp H>;
             bindings = <&kp L>, <&kp I>, <&kp M>;   // B,H -> "bl"   U,H -> "ui"   L,H -> "lm"
             antecedents = <B U L>;
-            max-delay-ms = <125>;
+            max-delay-ms = <200>;
         };
 
         ad_opt_minus: adaptive_opt_minus {
