@@ -158,7 +158,6 @@
             bindings = <&m_qu>;
         };
     };
-    };
 
     behaviors {
         hm: homerow_mods {
@@ -409,7 +408,6 @@
             flavor = "tap-preferred";
             bindings = <&kp>, <&ad_opta_n>;
         };
-    };
     };
 
     keymap {
