@@ -10,11 +10,12 @@
 
 #define BASE 0
 #define OPT  1
-#define SYM  2
-#define NAV  3
-#define SYS  4
-#define NUM  5
-#define WM   6
+#define OPTA 2
+#define SYM  3
+#define NAV  4
+#define SYS  5
+#define NUM  6
+#define WM   7
 
 &sk {
     release-after-ms = <1000>;
@@ -154,6 +155,26 @@
             timeout-ms = <45>;
             layers = <OPT>;
             key-positions = <31 33>; // C + W
+            bindings = <&m_qu>;
+        };
+        // OPTA layer: same finger pattern on the right top row (G index, M middle, W ring);
+        // these letter pairs are under 0.01% of English bigrams
+        combo_z_opta {
+            timeout-ms = <45>;
+            layers = <OPTA>;
+            key-positions = <8 9>; // M + W
+            bindings = <&kp Z>;
+        };
+        combo_q_opta {
+            timeout-ms = <45>;
+            layers = <OPTA>;
+            key-positions = <7 8>; // G + M
+            bindings = <&kp Q>;
+        };
+        combo_qu_opta {
+            timeout-ms = <45>;
+            layers = <OPTA>;
+            key-positions = <7 9>; // G + W
             bindings = <&m_qu>;
         };
     };
@@ -324,6 +345,89 @@
             flavor = "tap-preferred";
             bindings = <&kp>, <&ad_opt_h>;
         };
+
+        // OPTA layer adaptives (analyzer greedy search): sc, bl, wn, ui, rl, eo, ph, ok
+        ad_opta_r: adaptive_opta_r {
+            compatible = "zmk,behavior-antecedent-morph";
+            #binding-cells = <0>;
+            defaults = <&kp R>;
+            bindings = <&kp C>;       // S then R types "sc"
+            antecedents = <S>;
+            max-delay-ms = <200>;
+        };
+
+        ad_opta_h: adaptive_opta_h {
+            compatible = "zmk,behavior-antecedent-morph";
+            #binding-cells = <0>;
+            defaults = <&kp H>;
+            bindings = <&kp L>, <&kp I>, <&kp L>;   // B,H -> "bl"   U,H -> "ui"   R,H -> "rl"
+            antecedents = <B U R>;
+            max-delay-ms = <200>;
+        };
+
+        ad_opta_m: adaptive_opta_m {
+            compatible = "zmk,behavior-antecedent-morph";
+            #binding-cells = <0>;
+            defaults = <&kp M>;
+            bindings = <&kp N>;       // W then M types "wn"
+            antecedents = <W>;
+            max-delay-ms = <200>;
+        };
+
+        ad_opta_u: adaptive_opta_u {
+            compatible = "zmk,behavior-antecedent-morph";
+            #binding-cells = <0>;
+            defaults = <&kp U>;
+            bindings = <&kp O>;       // E then U types "eo" (for "eu", pause after E)
+            antecedents = <E>;
+            max-delay-ms = <200>;
+        };
+
+        ad_opta_n: adaptive_opta_n {
+            compatible = "zmk,behavior-antecedent-morph";
+            #binding-cells = <0>;
+            defaults = <&kp N>;
+            bindings = <&kp H>;       // P then N types "ph"
+            antecedents = <P>;
+            max-delay-ms = <200>;
+        };
+
+        ad_opta_j: adaptive_opta_j {
+            compatible = "zmk,behavior-antecedent-morph";
+            #binding-cells = <0>;
+            defaults = <&kp J>;
+            bindings = <&kp K>;       // O then J types "ok" (for "oj" as in project, pause after O)
+            antecedents = <O>;
+            max-delay-ms = <200>;
+        };
+
+        // home-row mods whose taps are OPTA adaptives (used as &hm_opta_x MOD 0)
+        hm_opta_h: homerow_mod_opta_h {
+            compatible = "zmk,behavior-hold-tap";
+            #binding-cells = <2>;
+            tapping-term-ms = <200>;
+            quick-tap-ms = <175>;
+            flavor = "tap-preferred";
+            bindings = <&kp>, <&ad_opta_h>;
+        };
+
+        hm_opta_n: homerow_mod_opta_n {
+            compatible = "zmk,behavior-hold-tap";
+            #binding-cells = <2>;
+            tapping-term-ms = <200>;
+            quick-tap-ms = <175>;
+            flavor = "tap-preferred";
+            bindings = <&kp>, <&ad_opta_n>;
+        };
+
+        hm_opta_r: homerow_mod_opta_r {
+            compatible = "zmk,behavior-hold-tap";
+            #binding-cells = <2>;
+            tapping-term-ms = <200>;
+            quick-tap-ms = <175>;
+            flavor = "tap-preferred";
+            bindings = <&kp>, <&ad_opta_r>;
+        };
     };
 
     keymap {
@@ -364,7 +468,25 @@
             >;
         };
 
-        // Layer 2: Symbols (right thumb space hold)
+        // Layer 2: OPTA (alternate base, &to OPTA from the system layer)
+        // OPT with A on the thumb and E on the home row: lighter thumb (8% vs 12%), no thumb doubles.
+        // Combos on this layer: Z = M+W, Q = G+M, QU = G+W (right top row).
+        // Adaptives: S,R -> sc   B,H -> bl   U,H -> ui   R,H -> rl   W,M -> wn   E,U -> eo   P,N -> ph   O,J -> ok
+        // ╭───────────────────────────────────────╮ ╭───────────────────────────────────────╮
+        // │       │  '  │  P  │  O  │  U  │  -  │ │  V  │  G  │  M  │  W  │  J  │       │
+        // │       │ Y/G │ H/C │ E/S │ I/A │  .  │ │  B  │ S/A │ T/S │ N/C │ R/G │       │
+        // │       │  /  │  K  │  =  │  ,  │  ;  │ │  F  │  C  │  D  │  L  │  X  │       │
+        // ╰───────────────────╮   BSPC   │ A/NAV │ SHFT │ │ SHFT │ SPC/SYM │ ENT ╭───────────────────╯
+        opta_layer {
+            bindings = <
+   &trans  &kp APOS       &kp P          &kp O           &ad_opta_u     &kp MINUS     &kp V       &kp G          &ad_opta_m      &kp W          &ad_opta_j    &trans
+   &trans  &hm LGUI Y     &hm_opta_h LCTRL 0 &hm LSHIFT E &hm LALT I    &kp PERIOD    &kp B       &hm LALT S     &hm LSHIFT T    &hm_opta_n LCTRL 0 &hm_opta_r LGUI 0 &trans
+   &trans  &kp FSLH       &kp K          &kp EQUAL       &kp COMMA      &kp SEMI      &kp F       &kp C          &kp D           &kp L          &kp X         &trans
+                                         &trans          &lt NAV A      &trans        &trans      &trans         &trans
+            >;
+        };
+
+        // Layer 3: Symbols (right thumb space hold)
         // Mirrors your layer_keypad symbols
         layer_sym {
             bindings = <
@@ -375,7 +497,7 @@
             >;
         };
 
-        // Layer 3: Nav (left thumb hold)
+        // Layer 4: Nav (left thumb hold)
         // Arrow keys, page nav — mirrors layer_fn
         layer_nav {
             bindings = <
@@ -386,17 +508,17 @@
             >;
         };
 
-        // Layer 4: Bluetooth / System (top-right outer key); bottom row right: &to BASE / &to OPT
+        // Layer 5: Bluetooth / System (top-right outer key); bottom row right: &to BASE / &to OPT / &to OPTA
         layer_bt {
             bindings = <
    &none   &bt BT_SEL 0  &bt BT_SEL 1  &bt BT_SEL 2  &bt BT_SEL 3  &bt BT_SEL 4      &none   &none   &none   &none   &none   &none
    &none   &none         &none         &none         &none         &none             &none   &none   &none   &none   &none   &none
-   &none   &none         &none         &none         &none         &bt BT_CLR        &none   &to BASE &to OPT &none   &none   &none
+   &none   &none         &none         &none         &none         &bt BT_CLR        &none   &to BASE &to OPT &to OPTA &none  &none
                                        &none         &none         &none             &none   &none   &none
             >;
         };
 
-        // Layer 5: Numpad (ESC hold)
+        // Layer 6: Numpad (ESC hold)
         // Mirrors layer_num
         layer_num {
             bindings = <
@@ -407,7 +529,7 @@
             >;
         };
 
-        // Layer 6: Window manager
+        // Layer 7: Window manager
         layer_wm {
             bindings = <
    &none  &none  &none  &none  &none  &none      &none  &none  &none  &none  &none  &none
